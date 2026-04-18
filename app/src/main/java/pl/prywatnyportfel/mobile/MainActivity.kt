@@ -9,23 +9,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import pl.prywatnyportfel.mobile.offline.OfflineBackendServer
 import pl.prywatnyportfel.mobile.offline.OfflineRepository
-import java.net.HttpURLConnection
-import java.net.URL
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var swipeRefresh: SwipeRefreshLayout
-    private lateinit var backendStatusText: TextView
-    private lateinit var reloadBtn: Button
 
     private lateinit var offlineServer: OfflineBackendServer
 
@@ -45,8 +38,6 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         swipeRefresh = findViewById(R.id.swipeRefresh)
-        backendStatusText = findViewById(R.id.backendStatusText)
-        reloadBtn = findViewById(R.id.reloadBtn)
 
         offlineServer = OfflineBackendServer(applicationContext, OfflineRepository(applicationContext))
         offlineServer.start()
@@ -54,10 +45,6 @@ class MainActivity : AppCompatActivity() {
         configureWebView()
 
         swipeRefresh.setOnRefreshListener {
-            webView.reload()
-        }
-
-        reloadBtn.setOnClickListener {
             webView.reload()
         }
 
@@ -75,12 +62,6 @@ class MainActivity : AppCompatActivity() {
         )
 
         webView.loadUrl("${offlineServer.baseUrl}/")
-        pingBackendAsync()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        pingBackendAsync()
     }
 
     override fun onDestroy() {
@@ -120,13 +101,11 @@ class MainActivity : AppCompatActivity() {
             ) {
                 if (request?.isForMainFrame == true) {
                     swipeRefresh.isRefreshing = false
-                    updateBackendStatus(online = false)
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 swipeRefresh.isRefreshing = false
-                pingBackendAsync()
             }
 
             @Deprecated("Deprecated in Java")
@@ -137,7 +116,6 @@ class MainActivity : AppCompatActivity() {
                 failingUrl: String?
             ) {
                 swipeRefresh.isRefreshing = false
-                updateBackendStatus(online = false)
             }
         }
 
@@ -158,42 +136,5 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    private fun pingBackendAsync() {
-        Thread {
-            val url = "${offlineServer.baseUrl}/api/health"
-            val online = try {
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 2500
-                conn.readTimeout = 2500
-                conn.instanceFollowRedirects = true
-                conn.connect()
-                val ok = conn.responseCode in 200..299
-                conn.disconnect()
-                ok
-            } catch (_: Exception) {
-                false
-            }
-            runOnUiThread {
-                updateBackendStatus(online)
-            }
-        }.start()
-    }
-
-    private fun updateBackendStatus(online: Boolean) {
-        val backendUrl = offlineServer.baseUrl
-        backendStatusText.text = if (online) {
-            getString(R.string.backend_online, backendUrl)
-        } else {
-            getString(R.string.backend_offline, backendUrl)
-        }
-        val color = if (online) {
-            ContextCompat.getColor(this, R.color.status_online)
-        } else {
-            ContextCompat.getColor(this, R.color.status_offline)
-        }
-        backendStatusText.setTextColor(color)
     }
 }
