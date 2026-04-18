@@ -4466,7 +4466,7 @@ function activateView(target) {
   document.querySelectorAll(`[data-view="${target}"]`).forEach((item) => {
     item.classList.add("active");
   });
-  if (dom.moreNavBtn && ["toolsView", "appearanceView"].includes(target)) {
+  if (dom.moreNavBtn && ["appearanceView"].includes(target)) {
     dom.moreNavBtn.classList.add("active");
   }
   const targetView = document.getElementById(target);
