@@ -3,6 +3,7 @@
 const STORAGE_KEY = "prywatny-portfel-state-v1";
 const LEGACY_STORAGE_KEYS = ["myfund-solo-state-v1"];
 const API_BASE = "/api";
+const SOLO_PLAN = "Expert";
 const PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"];
 const PLAN_LIMITS = {
   Brak: { portfolios: 0, groupPortfolios: 0, twinPortfolios: 0 },
@@ -797,7 +798,6 @@ function cacheDom() {
   dom.onboardingPills = document.getElementById("onboardingPills");
   dom.onboardingSkipBtn = document.getElementById("onboardingSkipBtn");
   dom.onboardingNextBtn = document.getElementById("onboardingNextBtn");
-  dom.planSelect = document.getElementById("planSelect");
   dom.baseCurrencySelect = document.getElementById("baseCurrencySelect");
   dom.themeToggleBtn = document.getElementById("themeToggleBtn");
   dom.exportBackupBtn = document.getElementById("exportBackupBtn");
@@ -1012,7 +1012,6 @@ function cacheDom() {
   dom.publicPortfoliosInfo = document.getElementById("publicPortfoliosInfo");
   dom.publicPortfoliosTable = document.getElementById("publicPortfoliosTable");
 
-  dom.featureMatrix = document.getElementById("featureMatrix");
   dom.appearanceThemeGrid = document.getElementById("appearanceThemeGrid");
   dom.appearanceIconGrid = document.getElementById("appearanceIconGrid");
   dom.appearanceFontGrid = document.getElementById("appearanceFontGrid");
@@ -1022,7 +1021,6 @@ function cacheDom() {
 }
 
 function seedStaticSelects() {
-  fillSelect(dom.planSelect, PLAN_ORDER.map((plan) => ({ value: plan, label: plan })));
   fillSelect(dom.reportSelect, REPORT_FEATURES.map((item) => ({ value: item, label: item })));
   fillSelect(
     dom.operationTypeSelect,
@@ -1079,7 +1077,6 @@ function bindEvents() {
   if (dom.recordSheetBackdrop) {
     dom.recordSheetBackdrop.addEventListener("click", closeRecordSheet);
   }
-  dom.planSelect.addEventListener("change", onPlanChange);
   dom.baseCurrencySelect.addEventListener("change", onBaseCurrencyChange);
   if (dom.themeToggleBtn) {
     dom.themeToggleBtn.addEventListener("click", onThemeToggle);
@@ -4407,7 +4404,7 @@ function activateView(target) {
   document.querySelectorAll(`[data-view="${target}"]`).forEach((item) => {
     item.classList.add("active");
   });
-  if (dom.moreNavBtn && ["toolsView", "appearanceView", "featuresView"].includes(target)) {
+  if (dom.moreNavBtn && ["toolsView", "appearanceView"].includes(target)) {
     dom.moreNavBtn.classList.add("active");
   }
   const targetView = document.getElementById(target);
@@ -4436,19 +4433,6 @@ function onTabClick(event) {
     return;
   }
   activateView(target);
-}
-
-function onPlanChange() {
-  state.meta.activePlan = dom.planSelect.value;
-  saveState();
-  renderFeatureMatrix();
-  renderToolCatalog();
-  const limit = currentPlanLimit().portfolios;
-  if (state.portfolios.length > limit) {
-    window.alert(
-      `Masz ${state.portfolios.length} portfeli, a plan ${state.meta.activePlan} pozwala na ${limit}.`
-    );
-  }
 }
 
 function onBaseCurrencyChange() {
@@ -4868,9 +4852,7 @@ function onPortfolioSubmit(event) {
   const editId = editingState.portfolioId && data.editId === editingState.portfolioId ? editingState.portfolioId : "";
 
   if (!editId && !canAddPortfolio()) {
-    window.alert(
-      `Plan ${state.meta.activePlan} pozwala na maksymalnie ${currentPlanLimit().portfolios} portfeli.`
-    );
+    window.alert(`Limit portfeli w aplikacji to ${currentPlanLimit().portfolios}.`);
     return;
   }
 
@@ -6073,7 +6055,6 @@ function renderAll() {
     document.querySelector(".operation-pane-btn.active")?.dataset.operationPaneTarget || "add"
   );
 
-  dom.planSelect.value = state.meta.activePlan;
   dom.baseCurrencySelect.value = state.meta.baseCurrency;
   if (dom.dashboardInflationEnabled) {
     dom.dashboardInflationEnabled.checked = Boolean(state.meta.dashboardInflationEnabled);
@@ -6098,7 +6079,6 @@ function renderAll() {
   renderLiabilities();
   renderDashboard();
   renderToolCatalog();
-  renderFeatureMatrix();
   renderAppearanceSettings();
   void renderReportCurrent();
   if (isViewActive("toolsView")) {
@@ -9050,9 +9030,7 @@ function removePortfolio(portfolioId) {
 
 function copyPortfolio(portfolioId) {
   if (!canAddPortfolio()) {
-    window.alert(
-      `Nie możesz skopiować portfela. Plan ${state.meta.activePlan} ma limit ${currentPlanLimit().portfolios}.`
-    );
+    window.alert(`Nie możesz skopiować portfela. Limit w aplikacji to ${currentPlanLimit().portfolios}.`);
     return;
   }
   const original = findById(state.portfolios, portfolioId);
@@ -9168,7 +9146,7 @@ function isFeatureAvailable(minPlan, activePlan) {
 }
 
 function currentPlanLimit() {
-  return PLAN_LIMITS[state.meta.activePlan] || PLAN_LIMITS.Basic;
+  return PLAN_LIMITS[SOLO_PLAN];
 }
 
 function canAddPortfolio() {
@@ -9271,9 +9249,7 @@ function normalizeState(input) {
   const fallback = defaultState();
   const normalized = {
     meta: {
-      activePlan: PLAN_ORDER.includes(stateValue.meta && stateValue.meta.activePlan)
-        ? stateValue.meta.activePlan
-        : fallback.meta.activePlan,
+      activePlan: SOLO_PLAN,
       baseCurrency: textOrFallback(stateValue.meta && stateValue.meta.baseCurrency, fallback.meta.baseCurrency),
       createdAt: (stateValue.meta && stateValue.meta.createdAt) || fallback.meta.createdAt,
       fxRates: normalizeFxRates(stateValue.meta && stateValue.meta.fxRates),
