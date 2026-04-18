@@ -1811,6 +1811,97 @@ hr {
   gap: 0.6rem;
 }
 
+.operations-mobile-header {
+  margin-bottom: 1rem;
+}
+
+.operations-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
+.operations-summary-card {
+  display: grid;
+  gap: 0.22rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 0.8rem 0.9rem;
+}
+
+.operations-summary-card span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.operations-summary-card strong {
+  font-size: 1rem;
+}
+
+.operations-pane-nav {
+  display: none;
+  gap: 0.55rem;
+  overflow-x: auto;
+  margin-top: 0.85rem;
+  padding-bottom: 0.25rem;
+  scrollbar-width: none;
+}
+
+.operations-pane-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.operation-pane-btn {
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.operation-pane-btn.active {
+  background: linear-gradient(120deg, var(--brand-strong), var(--brand));
+  border-color: transparent;
+  color: #fff;
+}
+
+.operation-pane + .operation-pane {
+  margin-top: 1rem;
+}
+
+.operations-mobile-copy {
+  margin-bottom: 0.9rem;
+}
+
+.operations-filter-sheet {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 0.15rem 0.85rem 0.85rem;
+  margin-bottom: 0.8rem;
+}
+
+.operations-filter-sheet summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.78rem 0 0.7rem;
+  font-weight: 700;
+}
+
+.operations-filter-sheet summary::-webkit-details-marker {
+  display: none;
+}
+
+.operations-filter-grid {
+  gap: 0.65rem;
+}
+
+.operations-mobile-stack {
+  margin-top: 0.95rem;
+}
+
 .form-step {
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -2008,5 +2099,37 @@ hr {
 
   .freshness-strip {
     padding: 0.65rem 0.85rem 0;
+  }
+
+  .operations-summary-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .operations-pane-nav {
+    display: flex;
+  }
+
+  .operation-pane {
+    display: none;
+  }
+
+  .operation-pane.active {
+    display: block;
+  }
+
+  .operation-pane + .operation-pane {
+    margin-top: 0;
+  }
+
+  #operationsView .grid-two {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+
+  #operationFormPanel,
+  #operationImportPanel,
+  #recurringOperationsPanel,
+  #operationHistoryPanel {
+    margin-bottom: 0;
   }
 }

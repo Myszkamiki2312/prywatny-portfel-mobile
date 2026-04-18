@@ -601,6 +601,15 @@ function onJumpButtonClick(event) {
   if (!targetId) {
     return;
   }
+  if (targetId === "quickOperationPanel" || targetId === "operationFormPanel") {
+    activateOperationPane("add");
+  } else if (targetId === "operationHistoryPanel") {
+    activateOperationPane("history");
+  } else if (targetId === "operationImportPanel") {
+    activateOperationPane("import");
+  } else if (targetId === "recurringOperationsPanel") {
+    activateOperationPane("recurring");
+  }
   const node = document.getElementById(targetId);
   if (node) {
     node.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -615,6 +624,7 @@ function onQuickOperationClick(event) {
   closeFabMenu();
   closeRecordSheet();
   activateView("operationsView");
+  activateOperationPane("add");
   resetOperationForm();
   const typeInput = dom.operationForm.querySelector('[name="type"]');
   const quantityInput = dom.operationForm.querySelector('[name="quantity"]');
@@ -732,6 +742,33 @@ function openFormStep(form, index) {
   });
 }
 
+function activateOperationPane(target) {
+  const paneKey = String(target || "add");
+  document.querySelectorAll(".operation-pane").forEach((pane) => {
+    pane.classList.toggle("active", pane.dataset.operationPane === paneKey);
+  });
+  document.querySelectorAll(".operation-pane-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.operationPaneTarget === paneKey);
+  });
+}
+
+function renderOperationsWorkspaceSummary() {
+  if (dom.operationsSummaryCount) {
+    dom.operationsSummaryCount.textContent = String(state.operations.length);
+  }
+  if (dom.operationsSummaryRecurringCount) {
+    dom.operationsSummaryRecurringCount.textContent = String(state.recurringOps.length);
+  }
+  if (dom.operationsSummaryLastDate) {
+    const lastDate = state.operations
+      .map((item) => String(item.date || ""))
+      .filter(Boolean)
+      .sort()
+      .slice(-1)[0];
+    dom.operationsSummaryLastDate.textContent = lastDate || "-";
+  }
+}
+
 function cacheDom() {
   dom.tabs = document.getElementById("tabs");
   dom.bottomNav = document.getElementById("bottomNav");
@@ -812,6 +849,9 @@ function cacheDom() {
   dom.assetList = document.getElementById("assetList");
 
   dom.operationForm = document.getElementById("operationForm");
+  dom.operationsSummaryCount = document.getElementById("operationsSummaryCount");
+  dom.operationsSummaryRecurringCount = document.getElementById("operationsSummaryRecurringCount");
+  dom.operationsSummaryLastDate = document.getElementById("operationsSummaryLastDate");
   dom.operationEditId = document.getElementById("operationEditId");
   dom.operationSubmitBtn = document.getElementById("operationSubmitBtn");
   dom.operationCancelEditBtn = document.getElementById("operationCancelEditBtn");
@@ -1112,6 +1152,19 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-jump-target]").forEach((button) => {
     button.addEventListener("click", onJumpButtonClick);
+  });
+  document.querySelectorAll("[data-operation-pane-target]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      const target = event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.operationPaneTarget : "";
+      if (!target) {
+        return;
+      }
+      activateOperationPane(target);
+      const paneNode = document.querySelector(`.operation-pane[data-operation-pane="${target}"]`);
+      if (paneNode) {
+        paneNode.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
   });
   document.addEventListener("click", onRecordRowClick);
   document.addEventListener("keydown", onGlobalKeydown);
@@ -5117,6 +5170,8 @@ function startOperationEdit(operationId) {
   if (!operation || !dom.operationForm) {
     return;
   }
+  activateView("operationsView");
+  activateOperationPane("add");
   editingState.operationId = operation.id;
   if (dom.operationEditId) {
     dom.operationEditId.value = operation.id;
@@ -5264,6 +5319,8 @@ function startRecurringEdit(recurringId) {
   if (!recurring || !dom.recurringForm) {
     return;
   }
+  activateView("operationsView");
+  activateOperationPane("recurring");
   editingState.recurringId = recurring.id;
   if (dom.recurringEditId) {
     dom.recurringEditId.value = recurring.id;
@@ -6012,6 +6069,9 @@ function renderAll() {
   syncEditingForms();
   applyAppearanceSettings();
   saveState({ preserveHistoryCache: true });
+  activateOperationPane(
+    document.querySelector(".operation-pane-btn.active")?.dataset.operationPaneTarget || "add"
+  );
 
   dom.planSelect.value = state.meta.activePlan;
   dom.baseCurrencySelect.value = state.meta.baseCurrency;
@@ -6031,6 +6091,7 @@ function renderAll() {
   renderAssets();
   renderOperations();
   renderRecurring();
+  renderOperationsWorkspaceSummary();
   renderAlerts();
   renderNotes();
   renderStrategies();

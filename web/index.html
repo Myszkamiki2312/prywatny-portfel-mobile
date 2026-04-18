@@ -361,28 +361,61 @@
       </section>
 
       <section id="operationsView" class="view">
-        <div class="mobile-section-switcher" aria-label="Skróty ekranu operacji">
-          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="quickOperationPanel">Szybka operacja</button>
-          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="operationFormPanel">Formularz</button>
-          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="operationHistoryPanel">Historia</button>
-        </div>
-        <article id="quickOperationPanel" class="panel quick-operation-panel">
+        <div class="panel operations-mobile-header">
           <div class="panel-head">
             <div>
-              <h2>Szybka operacja</h2>
-              <p class="muted">Jednym kliknięciem ustawiamy prosty formularz pod gotówkę, kupno albo sprzedaż.</p>
+              <h2>Operacje</h2>
+              <p class="muted">Najpierw dodaj, potem sprawdź historię. Import i cykliczne są schowane głębiej, żeby ekran nie był przeładowany.</p>
             </div>
           </div>
-          <div class="quick-operation-grid">
-            <button type="button" class="btn quick-operation-btn" data-quick-operation="cash">+ Gotówka</button>
-            <button type="button" class="btn secondary quick-operation-btn" data-quick-operation="buy">Kupno</button>
-            <button type="button" class="btn secondary quick-operation-btn" data-quick-operation="sell">Sprzedaż</button>
+          <div class="operations-summary-strip">
+            <article class="operations-summary-card">
+              <span>Operacje</span>
+              <strong id="operationsSummaryCount">0</strong>
+            </article>
+            <article class="operations-summary-card">
+              <span>Cykliczne</span>
+              <strong id="operationsSummaryRecurringCount">0</strong>
+            </article>
+            <article class="operations-summary-card">
+              <span>Ostatnia data</span>
+              <strong id="operationsSummaryLastDate">-</strong>
+            </article>
           </div>
-          <div id="quickOperationInfo" class="hint"></div>
-        </article>
-        <div class="grid-two">
+          <div class="operations-pane-nav" aria-label="Nawigacja operacji">
+            <button type="button" class="btn secondary operation-pane-btn active" data-operation-pane-target="add">Dodaj</button>
+            <button type="button" class="btn secondary operation-pane-btn" data-operation-pane-target="history">Historia</button>
+            <button type="button" class="btn secondary operation-pane-btn" data-operation-pane-target="import">Import</button>
+            <button type="button" class="btn secondary operation-pane-btn" data-operation-pane-target="recurring">Cykliczne</button>
+          </div>
+        </div>
+
+        <div class="mobile-section-switcher" aria-label="Skróty ekranu operacji">
+          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="quickOperationPanel">Szybki start</button>
+          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="operationHistoryPanel">Historia</button>
+          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="operationImportPanel">Import</button>
+          <button type="button" class="btn secondary mobile-jump-btn" data-jump-target="recurringOperationsPanel">Cykliczne</button>
+        </div>
+
+        <section class="operation-pane active" data-operation-pane="add">
+          <article id="quickOperationPanel" class="panel quick-operation-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Szybka operacja</h2>
+                <p class="muted">Jednym kliknięciem ustawiamy prosty formularz pod gotówkę, kupno albo sprzedaż.</p>
+              </div>
+            </div>
+            <div class="quick-operation-grid">
+              <button type="button" class="btn quick-operation-btn" data-quick-operation="cash">+ Gotówka</button>
+              <button type="button" class="btn secondary quick-operation-btn" data-quick-operation="buy">Kupno</button>
+              <button type="button" class="btn secondary quick-operation-btn" data-quick-operation="sell">Sprzedaż</button>
+            </div>
+            <div id="quickOperationInfo" class="hint"></div>
+          </article>
+
           <article id="operationFormPanel" class="panel">
             <h2>Dodaj operację</h2>
+            <p class="muted operations-mobile-copy">Na telefonie najczęściej wystarczą: typ, portfel, konto, kwota i ewentualnie walor.</p>
             <form id="operationForm" class="form-grid">
               <input type="hidden" name="editId" id="operationEditId" value="" />
               <label class="control">
@@ -457,9 +490,12 @@
               </div>
             </form>
           </article>
+        </section>
 
-          <article class="panel">
+        <section class="operation-pane" data-operation-pane="import">
+          <article id="operationImportPanel" class="panel">
             <h2>Import operacji</h2>
+            <p class="muted operations-mobile-copy">Używaj tego, gdy chcesz wrzucić większą partię danych. Na co dzień szybsza będzie opcja `Dodaj` albo `+` na dole ekranu.</p>
             <p class="muted">
               Obsługiwane nagłówki: date,type,portfolio,account,asset,targetAsset,quantity,targetQuantity,price,amount,fee,currency,tags,note
             </p>
@@ -493,8 +529,13 @@
               placeholder="Wklej treść maila z tabelą CSV lub liniami w formacie: date;type;amount;..."
             ></textarea>
             <button id="mailImportBtn" class="btn secondary">Importuj z treści</button>
-            <hr />
-            <h3>Operacje cykliczne</h3>
+          </article>
+        </section>
+
+        <section class="operation-pane" data-operation-pane="recurring">
+          <article id="recurringOperationsPanel" class="panel">
+            <h2>Operacje cykliczne</h2>
+            <p class="muted operations-mobile-copy">To sekcja do stałych wpłat i automatycznych zakupów. Na telefonie trzymamy ją osobno, żeby zwykłe operacje były szybsze.</p>
             <form id="recurringForm" class="form-grid">
               <input type="hidden" name="editId" id="recurringEditId" value="" />
               <label class="control">
@@ -535,58 +576,68 @@
                   <option value="">Brak</option>
                 </select>
               </label>
-              <div class="actions-inline full">
+              <div class="actions-inline full sticky-form-actions">
                 <button id="recurringSubmitBtn" type="submit" class="btn">Dodaj cykliczną</button>
                 <button id="recurringCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
               </div>
             </form>
-            <div class="stack">
+            <div class="stack operations-mobile-stack">
               <button id="runRecurringBtn" class="btn">Wygeneruj zaległe operacje</button>
               <div id="recurringList" class="table-wrap"></div>
             </div>
           </article>
-        </div>
+        </section>
 
-        <article id="operationHistoryPanel" class="panel">
-          <h2>Historia operacji</h2>
-          <div class="actions-inline">
-            <label class="control inline">
-              <span>Szukaj</span>
-              <input id="operationHistorySearchInput" type="search" placeholder="Ticker, typ, notatka, tag..." />
-            </label>
-            <label class="control inline">
-              <span>Data od</span>
-              <input id="operationHistoryDateFromInput" type="date" />
-            </label>
-            <label class="control inline">
-              <span>Data do</span>
-              <input id="operationHistoryDateToInput" type="date" />
-            </label>
-            <label class="control inline">
-              <span>Typ</span>
-              <select id="operationHistoryTypeSelect"></select>
-            </label>
-            <label class="control inline">
-              <span>Portfel</span>
-              <select id="operationHistoryPortfolioSelect"></select>
-            </label>
-            <label class="control inline">
-              <span>Konto</span>
-              <select id="operationHistoryAccountSelect"></select>
-            </label>
-            <label class="control inline">
-              <span>Kwota od</span>
-              <input id="operationHistoryAmountMinInput" type="number" step="0.01" placeholder="0.00" />
-            </label>
-            <label class="control inline">
-              <span>Kwota do</span>
-              <input id="operationHistoryAmountMaxInput" type="number" step="0.01" placeholder="0.00" />
-            </label>
-            <button id="operationHistoryResetBtn" type="button" class="btn secondary">Wyczyść filtry</button>
-          </div>
-          <div id="operationHistoryInfo" class="hint"></div>
-          <div id="operationList" class="table-wrap"></div>
-        </article>
+        <section class="operation-pane" data-operation-pane="history">
+          <article id="operationHistoryPanel" class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Historia operacji</h2>
+                <p class="muted operations-mobile-copy">Filtrowanie jest schowane niżej, żeby od razu było widać listę operacji.</p>
+              </div>
+              <button id="operationHistoryResetBtn" type="button" class="btn secondary">Wyczyść</button>
+            </div>
+            <details class="operations-filter-sheet">
+              <summary>Filtry historii</summary>
+              <div class="form-step-grid operations-filter-grid">
+                <label class="control inline">
+                  <span>Szukaj</span>
+                  <input id="operationHistorySearchInput" type="search" placeholder="Ticker, typ, notatka, tag..." />
+                </label>
+                <label class="control inline">
+                  <span>Data od</span>
+                  <input id="operationHistoryDateFromInput" type="date" />
+                </label>
+                <label class="control inline">
+                  <span>Data do</span>
+                  <input id="operationHistoryDateToInput" type="date" />
+                </label>
+                <label class="control inline">
+                  <span>Typ</span>
+                  <select id="operationHistoryTypeSelect"></select>
+                </label>
+                <label class="control inline">
+                  <span>Portfel</span>
+                  <select id="operationHistoryPortfolioSelect"></select>
+                </label>
+                <label class="control inline">
+                  <span>Konto</span>
+                  <select id="operationHistoryAccountSelect"></select>
+                </label>
+                <label class="control inline">
+                  <span>Kwota od</span>
+                  <input id="operationHistoryAmountMinInput" type="number" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="control inline">
+                  <span>Kwota do</span>
+                  <input id="operationHistoryAmountMaxInput" type="number" step="0.01" placeholder="0.00" />
+                </label>
+              </div>
+            </details>
+            <div id="operationHistoryInfo" class="hint"></div>
+            <div id="operationList" class="table-wrap"></div>
+          </article>
+        </section>
       </section>
 
       <section id="reportsView" class="view">
