@@ -314,6 +314,23 @@ const editingState = {
   alertId: "",
   liabilityId: ""
 };
+const onboardingState = {
+  step: 0,
+  items: [
+    {
+      title: "Witaj w mobilnym Prywatnym Portfelu",
+      body: "Ta wersja jest ustawiona pod telefon: dolna nawigacja, prostsze formularze i mniej ścisku na ekranie."
+    },
+    {
+      title: "Szybka operacja",
+      body: "W zakładce Operacje masz przyciski pod gotówkę, kupno i sprzedaż. Ustawiają formularz za Ciebie i skracają liczbę kliknięć."
+    },
+    {
+      title: "Mobilne karty i sticky akcje",
+      body: "Listy są pokazane jako czytelniejsze karty, a zapisywanie formularzy trzyma się dołu ekranu, żeby nie trzeba było przewijać do przycisków."
+    }
+  ]
+};
 const uiModules = {
   dashboard: null,
   operations: null,
@@ -328,7 +345,7 @@ const clientErrorTracker = {
 document.addEventListener("DOMContentLoaded", () => {
   void init().catch((error) => {
     console.error("Błąd inicjalizacji aplikacji.", error);
-    window.alert("Nie udało się uruchomić aplikacji. Sprawdź konsolę przeglądarki.");
+    showToast("Nie udało się uruchomić aplikacji. Sprawdź lokalny backend lub odśwież aplikację.", "error");
   });
 });
 
@@ -336,12 +353,16 @@ async function init() {
   await loadUiModules();
   setupGlobalErrorReporting();
   cacheDom();
+  patchMobileAlertUi();
   applyAppearanceSettings();
   seedStaticSelects();
+  enhanceMobileForms();
   bindEvents();
   resetOperationForm();
   await hydrateFromBackend();
   renderAll();
+  hideAppLoadingOverlay();
+  maybeOpenOnboarding();
 }
 
 async function loadUiModules() {
@@ -355,8 +376,254 @@ async function loadUiModules() {
   uiModules.tools = toolsModule;
 }
 
+function hideAppLoadingOverlay() {
+  if (dom.appLoadingOverlay) {
+    dom.appLoadingOverlay.hidden = true;
+  }
+}
+
+function patchMobileAlertUi() {
+  if (window.__mobileToastPatched) {
+    return;
+  }
+  window.__mobileToastPatched = true;
+  const nativeAlert = window.alert ? window.alert.bind(window) : null;
+  window.alert = (message) => {
+    const text = typeof message === "string" ? message : String(message || "");
+    showToast(text || "Wiadomość systemowa.", /błąd|nie udało|offline|timeout/i.test(text) ? "error" : "info");
+    if (!dom.toastStack && nativeAlert) {
+      nativeAlert(message);
+    }
+  };
+}
+
+function showToast(message, kind = "info") {
+  if (!dom.toastStack) {
+    return;
+  }
+  const toast = document.createElement("div");
+  toast.className = `toast ${kind}`;
+  toast.innerHTML = `<strong>${kind === "error" ? "Coś poszło nie tak" : "Informacja"}</strong><p>${escapeHtml(
+    String(message || "")
+  )}</p>`;
+  dom.toastStack.appendChild(toast);
+  window.setTimeout(() => {
+    toast.remove();
+  }, 3600);
+}
+
+function maybeOpenOnboarding() {
+  if (!dom.onboardingOverlay) {
+    return;
+  }
+  if (state.meta.mobileOnboardingSeen) {
+    dom.onboardingOverlay.hidden = true;
+    return;
+  }
+  onboardingState.step = 0;
+  renderOnboardingStep();
+  dom.onboardingOverlay.hidden = false;
+}
+
+function renderOnboardingStep() {
+  if (!dom.onboardingOverlay || !dom.onboardingTitle || !dom.onboardingBody || !dom.onboardingPills) {
+    return;
+  }
+  const item = onboardingState.items[onboardingState.step] || onboardingState.items[0];
+  dom.onboardingTitle.textContent = item.title;
+  dom.onboardingBody.textContent = item.body;
+  dom.onboardingPills.querySelectorAll(".appearance-pill").forEach((pill, index) => {
+    pill.classList.toggle("active", index === onboardingState.step);
+  });
+  if (dom.onboardingNextBtn) {
+    dom.onboardingNextBtn.textContent =
+      onboardingState.step >= onboardingState.items.length - 1 ? "Zaczynamy" : "Dalej";
+  }
+}
+
+function onOnboardingNext() {
+  if (onboardingState.step >= onboardingState.items.length - 1) {
+    completeOnboarding();
+    return;
+  }
+  onboardingState.step += 1;
+  renderOnboardingStep();
+}
+
+function completeOnboarding() {
+  state.meta.mobileOnboardingSeen = true;
+  saveState();
+  if (dom.onboardingOverlay) {
+    dom.onboardingOverlay.hidden = true;
+  }
+}
+
+function openMoreSheet() {
+  if (dom.moreSheet) {
+    dom.moreSheet.hidden = false;
+  }
+  if (dom.moreSheetBackdrop) {
+    dom.moreSheetBackdrop.hidden = false;
+  }
+}
+
+function closeMoreSheet() {
+  if (dom.moreSheet) {
+    dom.moreSheet.hidden = true;
+  }
+  if (dom.moreSheetBackdrop) {
+    dom.moreSheetBackdrop.hidden = true;
+  }
+}
+
+function onJumpButtonClick(event) {
+  const targetId = event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.jumpTarget : "";
+  if (!targetId) {
+    return;
+  }
+  const node = document.getElementById(targetId);
+  if (node) {
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function onQuickOperationClick(event) {
+  const kind = event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.quickOperation : "";
+  if (!kind || !dom.operationForm) {
+    return;
+  }
+  activateView("operationsView");
+  resetOperationForm();
+  const typeInput = dom.operationForm.querySelector('[name="type"]');
+  const quantityInput = dom.operationForm.querySelector('[name="quantity"]');
+  const amountInput = dom.operationForm.querySelector('[name="amount"]');
+  const assetInput = dom.operationForm.querySelector('[name="assetId"]');
+  if (typeInput) {
+    typeInput.value =
+      kind === "cash" ? "Operacja gotówkowa" : kind === "buy" ? "Kupno waloru" : "Sprzedaż waloru";
+  }
+  openFormStep(dom.operationForm, kind === "cash" ? 0 : 1);
+  if (dom.quickOperationInfo) {
+    dom.quickOperationInfo.textContent =
+      kind === "cash"
+        ? "Ustawiono szybki formularz pod gotówkę. Wpisz kwotę i konto."
+        : kind === "buy"
+          ? "Ustawiono szybki formularz pod kupno. Wybierz walor, ilość i cenę."
+          : "Ustawiono szybki formularz pod sprzedaż. Wybierz walor, ilość i cenę sprzedaży.";
+  }
+  const focusTarget =
+    kind === "cash" ? amountInput : assetInput || quantityInput || amountInput || dom.operationForm.querySelector("input");
+  if (focusTarget && typeof focusTarget.focus === "function") {
+    focusTarget.focus();
+  }
+}
+
+function enhanceMobileForms() {
+  setupFormStepper(dom.accountForm, [
+    { title: "1. Podstawy konta", fields: ["name", "type", "currency"] }
+  ]);
+  setupFormStepper(dom.assetForm, [
+    { title: "1. Podstawy waloru", fields: ["ticker", "name", "type", "currency"] },
+    { title: "2. Cena i ryzyko", fields: ["currentPrice", "risk"] },
+    { title: "3. Klasyfikacja", fields: ["sector", "industry", "tags", "benchmark"] }
+  ]);
+  setupFormStepper(dom.operationForm, [
+    { title: "1. Podstawy operacji", fields: ["date", "type", "portfolioId", "accountId", "currency"] },
+    { title: "2. Walor i ilości", fields: ["assetId", "targetAssetId", "quantity", "targetQuantity"] },
+    { title: "3. Kwota i opis", fields: ["price", "amount", "fee", "tags", "note"] }
+  ]);
+}
+
+function setupFormStepper(form, sections) {
+  if (!form || form.dataset.stepperReady === "1") {
+    return;
+  }
+  const hiddenNodes = Array.from(form.children).filter(
+    (node) => node.matches && node.matches('input[type="hidden"]')
+  );
+  const actionNodes = Array.from(form.children).filter(
+    (node) => node.matches && node.matches(".actions-inline")
+  );
+  const used = new Set(hiddenNodes.concat(actionNodes));
+  const fragment = document.createDocumentFragment();
+  hiddenNodes.forEach((node) => fragment.appendChild(node));
+
+  sections.forEach((section, index) => {
+    const details = document.createElement("details");
+    details.className = "form-step";
+    details.open = index === 0;
+    const summary = document.createElement("summary");
+    summary.textContent = section.title;
+    const grid = document.createElement("div");
+    grid.className = "form-step-grid";
+    section.fields.forEach((name) => {
+      const field = form.querySelector(`[name="${name}"]`);
+      const control = field ? field.closest(".control") : null;
+      if (control && !used.has(control)) {
+        grid.appendChild(control);
+        used.add(control);
+      }
+    });
+    if (grid.children.length) {
+      details.appendChild(summary);
+      details.appendChild(grid);
+      fragment.appendChild(details);
+    }
+  });
+
+  const remaining = Array.from(form.children).filter(
+    (node) => node.matches && node.matches(".control") && !used.has(node)
+  );
+  if (remaining.length) {
+    const details = document.createElement("details");
+    details.className = "form-step";
+    const summary = document.createElement("summary");
+    summary.textContent = "Dodatkowe pola";
+    const grid = document.createElement("div");
+    grid.className = "form-step-grid";
+    remaining.forEach((node) => {
+      grid.appendChild(node);
+      used.add(node);
+    });
+    details.appendChild(summary);
+    details.appendChild(grid);
+    fragment.appendChild(details);
+  }
+
+  actionNodes.forEach((node) => {
+    node.classList.add("sticky-form-actions");
+    fragment.appendChild(node);
+  });
+
+  form.innerHTML = "";
+  form.appendChild(fragment);
+  form.dataset.stepperReady = "1";
+}
+
+function openFormStep(form, index) {
+  if (!form) {
+    return;
+  }
+  form.querySelectorAll(".form-step").forEach((step, stepIndex) => {
+    step.open = stepIndex === index;
+  });
+}
+
 function cacheDom() {
   dom.tabs = document.getElementById("tabs");
+  dom.bottomNav = document.getElementById("bottomNav");
+  dom.moreNavBtn = document.getElementById("moreNavBtn");
+  dom.moreSheet = document.getElementById("moreSheet");
+  dom.moreSheetBackdrop = document.getElementById("moreSheetBackdrop");
+  dom.closeMoreSheetBtn = document.getElementById("closeMoreSheetBtn");
+  dom.appLoadingOverlay = document.getElementById("appLoadingOverlay");
+  dom.toastStack = document.getElementById("toastStack");
+  dom.onboardingOverlay = document.getElementById("onboardingOverlay");
+  dom.onboardingTitle = document.getElementById("onboardingTitle");
+  dom.onboardingBody = document.getElementById("onboardingBody");
+  dom.onboardingPills = document.getElementById("onboardingPills");
+  dom.onboardingSkipBtn = document.getElementById("onboardingSkipBtn");
+  dom.onboardingNextBtn = document.getElementById("onboardingNextBtn");
   dom.planSelect = document.getElementById("planSelect");
   dom.baseCurrencySelect = document.getElementById("baseCurrencySelect");
   dom.themeToggleBtn = document.getElementById("themeToggleBtn");
@@ -425,6 +692,7 @@ function cacheDom() {
   dom.operationHistoryAmountMaxInput = document.getElementById("operationHistoryAmountMaxInput");
   dom.operationHistoryResetBtn = document.getElementById("operationHistoryResetBtn");
   dom.operationHistoryInfo = document.getElementById("operationHistoryInfo");
+  dom.quickOperationInfo = document.getElementById("quickOperationInfo");
   dom.csvImportInput = document.getElementById("csvImportInput");
   dom.brokerSelect = document.getElementById("brokerSelect");
   dom.brokerCsvInput = document.getElementById("brokerCsvInput");
@@ -595,6 +863,23 @@ function seedStaticSelects() {
 
 function bindEvents() {
   dom.tabs.addEventListener("click", onTabClick);
+  if (dom.bottomNav) {
+    dom.bottomNav.addEventListener("click", onTabClick);
+  }
+  if (dom.moreSheet) {
+    dom.moreSheet.addEventListener("click", onTabClick);
+  }
+  if (dom.moreNavBtn) {
+    dom.moreNavBtn.addEventListener("click", () => {
+      openMoreSheet();
+    });
+  }
+  if (dom.closeMoreSheetBtn) {
+    dom.closeMoreSheetBtn.addEventListener("click", closeMoreSheet);
+  }
+  if (dom.moreSheetBackdrop) {
+    dom.moreSheetBackdrop.addEventListener("click", closeMoreSheet);
+  }
   dom.planSelect.addEventListener("change", onPlanChange);
   dom.baseCurrencySelect.addEventListener("change", onBaseCurrencyChange);
   if (dom.themeToggleBtn) {
@@ -662,6 +947,12 @@ function bindEvents() {
   dom.operationHistoryResetBtn.addEventListener("click", () => {
     resetOperationHistoryFilters();
     renderOperations();
+  });
+  document.querySelectorAll("[data-quick-operation]").forEach((button) => {
+    button.addEventListener("click", onQuickOperationClick);
+  });
+  document.querySelectorAll("[data-jump-target]").forEach((button) => {
+    button.addEventListener("click", onJumpButtonClick);
   });
   dom.recurringForm.addEventListener("submit", onRecurringSubmit);
   dom.recurringCancelEditBtn.addEventListener("click", () => {
@@ -885,6 +1176,12 @@ function bindEvents() {
   dom.resetStateBtn.addEventListener("click", onResetState);
   dom.refreshQuotesBtn.addEventListener("click", onRefreshQuotes);
   dom.brokerCsvInput.addEventListener("change", onBrokerCsvImport);
+  if (dom.onboardingSkipBtn) {
+    dom.onboardingSkipBtn.addEventListener("click", completeOnboarding);
+  }
+  if (dom.onboardingNextBtn) {
+    dom.onboardingNextBtn.addEventListener("click", onOnboardingNext);
+  }
 
   document.body.addEventListener("click", onActionClick);
 }
@@ -3778,22 +4075,43 @@ async function apiRequest(path, options = {}) {
     }
     return payload;
   } catch (error) {
+    const message = humanizeAppError(error, path);
     if (!String(path || "").startsWith("/tools/errors")) {
       void reportClientError({
         source: "client-api",
         level: "error",
         method,
         path,
-        message: error && error.message ? String(error.message) : "API request failed",
+        message,
         details: {
           timeoutMs
         }
       });
     }
-    throw error;
+    throw new Error(message);
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+function humanizeAppError(error, path = "") {
+  const raw = error && error.message ? String(error.message) : "Nieznany błąd.";
+  if (/Przekroczono czas oczekiwania|AbortError|signal is aborted/i.test(raw)) {
+    return "Backend mobilny odpowiada zbyt długo. Spróbuj ponownie albo odśwież ekran.";
+  }
+  if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) {
+    return "Nie udało się połączyć z lokalnym backendem aplikacji. Zamknij i otwórz apkę ponownie.";
+  }
+  if (/niepoprawny JSON/i.test(raw)) {
+    return "Backend zwrócił nieprawidłowe dane. Spróbuj ponownie po odświeżeniu aplikacji.";
+  }
+  if (/Błąd API 5/i.test(raw)) {
+    return "Wewnętrzny błąd backendu mobilnego. Dane lokalne powinny być bezpieczne, ale warto odświeżyć aplikację.";
+  }
+  if (/\/health/.test(path)) {
+    return "Backend mobilny chwilowo nie odpowiada. Spróbuj odświeżyć ekran.";
+  }
+  return raw;
 }
 
 function readFileAsText(file) {
@@ -3805,8 +4123,36 @@ function readFileAsText(file) {
   });
 }
 
+function activateView(target) {
+  if (!target) {
+    return;
+  }
+  document.querySelectorAll(".tab, .bottom-nav-tab, .more-sheet-btn").forEach((item) => {
+    item.classList.remove("active");
+  });
+  document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+  document.querySelectorAll(`[data-view="${target}"]`).forEach((item) => {
+    item.classList.add("active");
+  });
+  if (dom.moreNavBtn && ["toolsView", "appearanceView", "featuresView"].includes(target)) {
+    dom.moreNavBtn.classList.add("active");
+  }
+  const targetView = document.getElementById(target);
+  if (targetView) {
+    targetView.classList.add("active");
+  }
+  if (target === "dashboardView") {
+    renderDashboard();
+  } else if (target === "reportsView") {
+    void renderReportCurrent({ force: true });
+  } else if (target === "toolsView") {
+    void refreshExpertTools({ force: true });
+  }
+  closeMoreSheet();
+}
+
 function onTabClick(event) {
-  const tab = event.target.closest(".tab");
+  const tab = event.target.closest("[data-view]");
   if (!tab) {
     return;
   }
@@ -3814,24 +4160,7 @@ function onTabClick(event) {
   if (!target) {
     return;
   }
-  document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
-  document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
-  tab.classList.add("active");
-  const targetView = document.getElementById(target);
-  if (targetView) {
-    targetView.classList.add("active");
-  }
-  if (target === "dashboardView") {
-    renderDashboard();
-    return;
-  }
-  if (target === "reportsView") {
-    void renderReportCurrent({ force: true });
-    return;
-  }
-  if (target === "toolsView") {
-    void refreshExpertTools({ force: true });
-  }
+  activateView(target);
 }
 
 function onPlanChange() {
@@ -4026,6 +4355,19 @@ function updateTabIcons(iconSetKey) {
       return;
     }
     iconNode.textContent = icons[iconKey] || "◌";
+  });
+  const bottomMap = {
+    dashboardView: icons.dashboard,
+    portfoliosView: icons.portfolios,
+    accountsView: icons.accounts,
+    operationsView: icons.operations,
+    reportsView: icons.reports
+  };
+  document.querySelectorAll(".bottom-nav-tab[data-view]").forEach((tab) => {
+    const iconNode = tab.querySelector(".bottom-nav-icon");
+    if (iconNode) {
+      iconNode.textContent = bottomMap[tab.dataset.view] || icons.tools || "◌";
+    }
   });
 }
 
@@ -4311,6 +4653,7 @@ function resetAccountForm() {
   }
   if (dom.accountForm) {
     dom.accountForm.reset();
+    openFormStep(dom.accountForm, 0);
   }
 }
 
@@ -4343,6 +4686,7 @@ function startAccountEdit(accountId) {
   if (currencyInput) {
     currencyInput.value = account.currency || state.meta.baseCurrency;
   }
+  openFormStep(form, 0);
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -4374,6 +4718,7 @@ function onAccountSubmit(event) {
   scheduleFxRefresh();
   resetAccountForm();
   renderAll();
+  showToast(editId ? "Konto zapisane." : "Konto dodane.", "info");
 }
 
 function resetAssetForm() {
@@ -4389,6 +4734,7 @@ function resetAssetForm() {
   }
   if (dom.assetForm) {
     dom.assetForm.reset();
+    openFormStep(dom.assetForm, 0);
   }
 }
 
@@ -4449,6 +4795,7 @@ function startAssetEdit(assetId) {
   if (benchmarkInput) {
     benchmarkInput.value = asset.benchmark || "";
   }
+  openFormStep(form, 0);
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -4488,6 +4835,7 @@ function onAssetSubmit(event) {
   scheduleFxRefresh();
   resetAssetForm();
   renderAll();
+  showToast(editId ? "Walor zapisany." : "Walor dodany.", "info");
 }
 
 function resetOperationForm() {
@@ -4511,6 +4859,7 @@ function resetOperationForm() {
     if (currencyInput) {
       currencyInput.value = state.meta.baseCurrency;
     }
+    openFormStep(dom.operationForm, 0);
   }
 }
 
@@ -4615,6 +4964,7 @@ function startOperationEdit(operationId) {
   if (noteInput) {
     noteInput.value = operation.note || "";
   }
+  openFormStep(form, 0);
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -4668,6 +5018,7 @@ function onOperationSubmit(event) {
   scheduleFxRefresh();
   resetOperationForm();
   renderAll();
+  showToast(editId ? "Operacja zapisana." : "Operacja dodana.", "info");
 }
 
 function resetRecurringForm() {
@@ -5941,6 +6292,9 @@ async function renderReportCurrent(arg = null) {
   const reportName = dom.reportSelect.value || REPORT_FEATURES[0];
   const portfolioId = dom.reportPortfolioSelect.value || "";
   const requestId = ++backendSync.reportRequestSeq;
+  dom.reportInfo.textContent = "Ładowanie raportu…";
+  dom.reportOutput.innerHTML =
+    '<div class="table-empty-state"><strong>Ładowanie…</strong><p>Przygotowuję dane raportowe i serię wykresu.</p></div>';
   if (backendSync.available) {
     try {
       const payload = await apiRequest("/reports/generate", {
@@ -8163,12 +8517,18 @@ function renderTable(container, headers, rows) {
     return;
   }
   if (!rows || rows.length === 0) {
-    container.innerHTML = '<p class="muted">Brak danych.</p>';
+    container.innerHTML =
+      '<div class="table-empty-state"><strong>Brak danych</strong><p>Ten widok pokaże się, gdy dodasz pierwsze rekordy albo odświeżysz dane.</p></div>';
     return;
   }
   const head = `<tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>`;
   const body = rows
-    .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell, index) => `<td data-label="${escapeHtml(headers[index] || "")}">${cell}</td>`)
+          .join("")}</tr>`
+    )
     .join("");
   container.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
@@ -8559,6 +8919,7 @@ function defaultState() {
       lastLightTheme: APPEARANCE_DEFAULTS.lastLightTheme,
       iconSet: APPEARANCE_DEFAULTS.iconSet,
       fontScale: APPEARANCE_DEFAULTS.fontScale,
+      mobileOnboardingSeen: false,
       dashboardInflationEnabled: false,
       dashboardInflationRatePct: 0
     },
@@ -8632,6 +8993,7 @@ function normalizeState(input) {
       lastLightTheme: resolveLastLightTheme(stateValue.meta && stateValue.meta.lastLightTheme),
       iconSet: normalizeIconSet(stateValue.meta && stateValue.meta.iconSet),
       fontScale: normalizeFontScale(stateValue.meta && stateValue.meta.fontScale),
+      mobileOnboardingSeen: Boolean(stateValue.meta && stateValue.meta.mobileOnboardingSeen),
       dashboardInflationEnabled: normalizeInflationEnabled(
         stateValue.meta && stateValue.meta.dashboardInflationEnabled
       ),
