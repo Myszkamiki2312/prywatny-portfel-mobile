@@ -318,16 +318,22 @@ const onboardingState = {
   step: 0,
   items: [
     {
+      kicker: "Start mobilny",
+      icon: "◎",
       title: "Witaj w mobilnym Prywatnym Portfelu",
-      body: "Ta wersja jest ustawiona pod telefon: dolna nawigacja, prostsze formularze i mniej ścisku na ekranie."
+      body: "Masz tu układ ustawiony pod telefon: dolna nawigacja, prostsze ekrany i mniej ścisku na małym ekranie."
     },
     {
+      kicker: "Szybki start",
+      icon: "+",
       title: "Szybka operacja",
-      body: "W zakładce Operacje masz przyciski pod gotówkę, kupno i sprzedaż. Ustawiają formularz za Ciebie i skracają liczbę kliknięć."
+      body: "Przycisk + otwiera gotówkę, kupno i sprzedaż z każdego ekranu. Formularz ustawi się sam, żeby skrócić liczbę kliknięć."
     },
     {
+      kicker: "Lepszy podgląd",
+      icon: "◫",
       title: "Mobilne karty i sticky akcje",
-      body: "Listy są pokazane jako czytelniejsze karty, a zapisywanie formularzy trzyma się dołu ekranu, żeby nie trzeba było przewijać do przycisków."
+      body: "Listy pokazują się jako karty. Dotknij rekord, żeby zobaczyć szczegóły w dolnym panelu, a zapisywanie trzyma się dołu ekranu."
     }
   ]
 };
@@ -426,12 +432,23 @@ function maybeOpenOnboarding() {
 }
 
 function renderOnboardingStep() {
-  if (!dom.onboardingOverlay || !dom.onboardingTitle || !dom.onboardingBody || !dom.onboardingPills) {
+  if (
+    !dom.onboardingOverlay ||
+    !dom.onboardingTitle ||
+    !dom.onboardingBody ||
+    !dom.onboardingPills ||
+    !dom.onboardingKicker ||
+    !dom.onboardingIcon ||
+    !dom.onboardingStepMeta
+  ) {
     return;
   }
   const item = onboardingState.items[onboardingState.step] || onboardingState.items[0];
+  dom.onboardingKicker.textContent = item.kicker || "Start mobilny";
+  dom.onboardingIcon.textContent = item.icon || "◎";
   dom.onboardingTitle.textContent = item.title;
   dom.onboardingBody.textContent = item.body;
+  dom.onboardingStepMeta.textContent = `Krok ${onboardingState.step + 1} z ${onboardingState.items.length}`;
   dom.onboardingPills.querySelectorAll(".appearance-pill").forEach((pill, index) => {
     pill.classList.toggle("active", index === onboardingState.step);
   });
@@ -459,6 +476,8 @@ function completeOnboarding() {
 }
 
 function openMoreSheet() {
+  closeFabMenu();
+  closeRecordSheet();
   if (dom.moreSheet) {
     dom.moreSheet.hidden = false;
   }
@@ -474,6 +493,107 @@ function closeMoreSheet() {
   if (dom.moreSheetBackdrop) {
     dom.moreSheetBackdrop.hidden = true;
   }
+}
+
+function openFabMenu() {
+  closeMoreSheet();
+  closeRecordSheet();
+  if (dom.fabMenu) {
+    dom.fabMenu.hidden = false;
+  }
+  if (dom.fabMenuBackdrop) {
+    dom.fabMenuBackdrop.hidden = false;
+  }
+  if (dom.fabQuickAddBtn) {
+    dom.fabQuickAddBtn.setAttribute("aria-pressed", "true");
+  }
+}
+
+function closeFabMenu() {
+  if (dom.fabMenu) {
+    dom.fabMenu.hidden = true;
+  }
+  if (dom.fabMenuBackdrop) {
+    dom.fabMenuBackdrop.hidden = true;
+  }
+  if (dom.fabQuickAddBtn) {
+    dom.fabQuickAddBtn.setAttribute("aria-pressed", "false");
+  }
+}
+
+function openRecordSheet(details) {
+  if (!dom.recordSheet || !dom.recordSheetBody || !details || !details.rows || !details.rows.length) {
+    return;
+  }
+  closeMoreSheet();
+  closeFabMenu();
+  dom.recordSheetTitle.textContent = details.title || "Szczegóły rekordu";
+  dom.recordSheetSubtitle.textContent = details.subtitle || "Podgląd danych";
+  dom.recordSheetBody.innerHTML = details.rows
+    .map(
+      (row) =>
+        `<article class="record-sheet-row"><span class="record-sheet-label">${escapeHtml(
+          row.label || "-"
+        )}</span><strong class="record-sheet-value">${escapeHtml(row.value || "-")}</strong></article>`
+    )
+    .join("");
+  dom.recordSheet.hidden = false;
+  if (dom.recordSheetBackdrop) {
+    dom.recordSheetBackdrop.hidden = false;
+  }
+}
+
+function closeRecordSheet() {
+  if (dom.recordSheet) {
+    dom.recordSheet.hidden = true;
+  }
+  if (dom.recordSheetBackdrop) {
+    dom.recordSheetBackdrop.hidden = true;
+  }
+}
+
+function onRecordRowClick(event) {
+  const row = event.target.closest(".table-wrap tbody tr");
+  if (!row) {
+    return;
+  }
+  if (event.target.closest("button, a, input, select, textarea, label")) {
+    return;
+  }
+  const cells = Array.from(row.querySelectorAll("td"))
+    .map((cell) => ({
+      label: (cell.dataset.label || "").trim(),
+      value: (cell.textContent || "").replace(/\s+/g, " ").trim()
+    }))
+    .filter((cell) => cell.value && cell.label.toLowerCase() !== "akcje");
+  if (!cells.length) {
+    return;
+  }
+  const panelTitle =
+    row.closest(".panel")?.querySelector("h2")?.textContent?.trim() || row.closest(".view")?.querySelector("h2")?.textContent?.trim();
+  openRecordSheet({
+    title: panelTitle || "Szczegóły rekordu",
+    subtitle: cells[0] ? `${cells[0].label}: ${cells[0].value}` : "Podgląd danych",
+    rows: cells
+  });
+}
+
+function onGlobalKeydown(event) {
+  if (event.key === "Escape") {
+    closeMoreSheet();
+    closeFabMenu();
+    closeRecordSheet();
+    return;
+  }
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  const row = event.target && event.target.closest ? event.target.closest(".table-wrap tbody tr") : null;
+  if (!row) {
+    return;
+  }
+  event.preventDefault();
+  onRecordRowClick({ target: row });
 }
 
 function onJumpButtonClick(event) {
@@ -492,6 +612,8 @@ function onQuickOperationClick(event) {
   if (!kind || !dom.operationForm) {
     return;
   }
+  closeFabMenu();
+  closeRecordSheet();
   activateView("operationsView");
   resetOperationForm();
   const typeInput = dom.operationForm.querySelector('[name="type"]');
@@ -516,6 +638,7 @@ function onQuickOperationClick(event) {
   if (focusTarget && typeof focusTarget.focus === "function") {
     focusTarget.focus();
   }
+  showToast(dom.quickOperationInfo ? dom.quickOperationInfo.textContent : "Ustawiono szybką operację.", "info");
 }
 
 function enhanceMobileForms() {
@@ -616,11 +739,24 @@ function cacheDom() {
   dom.moreSheet = document.getElementById("moreSheet");
   dom.moreSheetBackdrop = document.getElementById("moreSheetBackdrop");
   dom.closeMoreSheetBtn = document.getElementById("closeMoreSheetBtn");
+  dom.fabQuickAddBtn = document.getElementById("fabQuickAddBtn");
+  dom.fabMenu = document.getElementById("fabMenu");
+  dom.fabMenuBackdrop = document.getElementById("fabMenuBackdrop");
+  dom.closeFabMenuBtn = document.getElementById("closeFabMenuBtn");
+  dom.recordSheet = document.getElementById("recordSheet");
+  dom.recordSheetBackdrop = document.getElementById("recordSheetBackdrop");
+  dom.recordSheetTitle = document.getElementById("recordSheetTitle");
+  dom.recordSheetSubtitle = document.getElementById("recordSheetSubtitle");
+  dom.recordSheetBody = document.getElementById("recordSheetBody");
+  dom.closeRecordSheetBtn = document.getElementById("closeRecordSheetBtn");
   dom.appLoadingOverlay = document.getElementById("appLoadingOverlay");
   dom.toastStack = document.getElementById("toastStack");
   dom.onboardingOverlay = document.getElementById("onboardingOverlay");
+  dom.onboardingKicker = document.getElementById("onboardingKicker");
+  dom.onboardingIcon = document.getElementById("onboardingIcon");
   dom.onboardingTitle = document.getElementById("onboardingTitle");
   dom.onboardingBody = document.getElementById("onboardingBody");
+  dom.onboardingStepMeta = document.getElementById("onboardingStepMeta");
   dom.onboardingPills = document.getElementById("onboardingPills");
   dom.onboardingSkipBtn = document.getElementById("onboardingSkipBtn");
   dom.onboardingNextBtn = document.getElementById("onboardingNextBtn");
@@ -632,6 +768,8 @@ function cacheDom() {
   dom.resetStateBtn = document.getElementById("resetStateBtn");
   dom.refreshQuotesBtn = document.getElementById("refreshQuotesBtn");
   dom.backendStatus = document.getElementById("backendStatus");
+  dom.quoteFreshnessBadge = document.getElementById("quoteFreshnessBadge");
+  dom.fxFreshnessBadge = document.getElementById("fxFreshnessBadge");
 
   dom.dashboardPortfolioSelect = document.getElementById("dashboardPortfolioSelect");
   dom.dashboardInflationEnabled = document.getElementById("dashboardInflationEnabled");
@@ -880,6 +1018,27 @@ function bindEvents() {
   if (dom.moreSheetBackdrop) {
     dom.moreSheetBackdrop.addEventListener("click", closeMoreSheet);
   }
+  if (dom.fabQuickAddBtn) {
+    dom.fabQuickAddBtn.addEventListener("click", () => {
+      if (dom.fabMenu && !dom.fabMenu.hidden) {
+        closeFabMenu();
+      } else {
+        openFabMenu();
+      }
+    });
+  }
+  if (dom.closeFabMenuBtn) {
+    dom.closeFabMenuBtn.addEventListener("click", closeFabMenu);
+  }
+  if (dom.fabMenuBackdrop) {
+    dom.fabMenuBackdrop.addEventListener("click", closeFabMenu);
+  }
+  if (dom.closeRecordSheetBtn) {
+    dom.closeRecordSheetBtn.addEventListener("click", closeRecordSheet);
+  }
+  if (dom.recordSheetBackdrop) {
+    dom.recordSheetBackdrop.addEventListener("click", closeRecordSheet);
+  }
   dom.planSelect.addEventListener("change", onPlanChange);
   dom.baseCurrencySelect.addEventListener("change", onBaseCurrencyChange);
   if (dom.themeToggleBtn) {
@@ -954,6 +1113,8 @@ function bindEvents() {
   document.querySelectorAll("[data-jump-target]").forEach((button) => {
     button.addEventListener("click", onJumpButtonClick);
   });
+  document.addEventListener("click", onRecordRowClick);
+  document.addEventListener("keydown", onGlobalKeydown);
   dom.recurringForm.addEventListener("submit", onRecurringSubmit);
   dom.recurringCancelEditBtn.addEventListener("click", () => {
     resetRecurringForm();
@@ -1446,11 +1607,70 @@ function applyQuotes(quotes) {
     asset.currentPrice = toNum(quote.price);
     asset.currency = textOrFallback(quote.currency, asset.currency || state.meta.baseCurrency);
   });
+  state.meta.lastQuotesRefreshAt = nowIso();
+  state.meta.lastQuotesCount = Object.keys(quoteByTicker).length;
 }
 
 function applyFxRates(rates) {
   const merged = { ...normalizeFxRates(state.meta.fxRates), ...normalizeFxRates(rates) };
   state.meta.fxRates = merged;
+  const nextCount = Object.keys(normalizeFxRates(rates)).length;
+  if (nextCount) {
+    state.meta.lastFxRefreshAt = nowIso();
+    state.meta.lastFxCount = nextCount;
+  }
+}
+
+function formatFreshnessAgeLabel(ageSeconds) {
+  if (!Number.isFinite(ageSeconds) || ageSeconds < 0) {
+    return "przed chwilą";
+  }
+  if (ageSeconds < 60) {
+    return "przed chwilą";
+  }
+  if (ageSeconds < 3600) {
+    return `${Math.max(1, Math.round(ageSeconds / 60))} min temu`;
+  }
+  if (ageSeconds < 86400) {
+    return `${Math.max(1, Math.round(ageSeconds / 3600))} h temu`;
+  }
+  return `${Math.max(1, Math.round(ageSeconds / 86400))} d temu`;
+}
+
+function ageSecondsFromIso(timestamp) {
+  const time = Date.parse(String(timestamp || ""));
+  if (!Number.isFinite(time)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(0, Math.round((Date.now() - time) / 1000));
+}
+
+function freshnessBadgeMeta(timestamp, count) {
+  if (!timestamp) {
+    return { text: "brak synchronizacji", kind: "off" };
+  }
+  const ageSeconds = ageSecondsFromIso(timestamp);
+  const base = `${formatFreshnessAgeLabel(ageSeconds)}${count ? ` • ${count}` : ""}`;
+  if (ageSeconds <= 15 * 60) {
+    return { text: base, kind: "ok" };
+  }
+  if (ageSeconds <= 60 * 60) {
+    return { text: base, kind: "off" };
+  }
+  return { text: `${base} • nieświeże`, kind: "off" };
+}
+
+function renderFreshnessBadges() {
+  if (dom.quoteFreshnessBadge) {
+    const quoteMeta = freshnessBadgeMeta(state.meta.lastQuotesRefreshAt, toNum(state.meta.lastQuotesCount) || 0);
+    dom.quoteFreshnessBadge.textContent = `Notowania: ${quoteMeta.text}`;
+    dom.quoteFreshnessBadge.className = `badge ${quoteMeta.kind}`;
+  }
+  if (dom.fxFreshnessBadge) {
+    const fxMeta = freshnessBadgeMeta(state.meta.lastFxRefreshAt, toNum(state.meta.lastFxCount) || 0);
+    dom.fxFreshnessBadge.textContent = `FX: ${fxMeta.text}`;
+    dom.fxFreshnessBadge.className = `badge ${fxMeta.kind}`;
+  }
 }
 
 async function pullQuotesFromBackend() {
@@ -4149,6 +4369,8 @@ function activateView(target) {
     void refreshExpertTools({ force: true });
   }
   closeMoreSheet();
+  closeFabMenu();
+  closeRecordSheet();
 }
 
 function onTabClick(event) {
@@ -5821,6 +6043,7 @@ function renderAll() {
   if (isViewActive("toolsView")) {
     void refreshExpertTools();
   }
+  renderFreshnessBadges();
   updateBackendStatus();
 }
 
@@ -8525,7 +8748,7 @@ function renderTable(container, headers, rows) {
   const body = rows
     .map(
       (row) =>
-        `<tr>${row
+        `<tr tabindex="0">${row
           .map((cell, index) => `<td data-label="${escapeHtml(headers[index] || "")}">${cell}</td>`)
           .join("")}</tr>`
     )
@@ -8920,6 +9143,10 @@ function defaultState() {
       iconSet: APPEARANCE_DEFAULTS.iconSet,
       fontScale: APPEARANCE_DEFAULTS.fontScale,
       mobileOnboardingSeen: false,
+      lastQuotesRefreshAt: "",
+      lastQuotesCount: 0,
+      lastFxRefreshAt: "",
+      lastFxCount: 0,
       dashboardInflationEnabled: false,
       dashboardInflationRatePct: 0
     },
@@ -8994,6 +9221,10 @@ function normalizeState(input) {
       iconSet: normalizeIconSet(stateValue.meta && stateValue.meta.iconSet),
       fontScale: normalizeFontScale(stateValue.meta && stateValue.meta.fontScale),
       mobileOnboardingSeen: Boolean(stateValue.meta && stateValue.meta.mobileOnboardingSeen),
+      lastQuotesRefreshAt: textOrFallback(stateValue.meta && stateValue.meta.lastQuotesRefreshAt, ""),
+      lastQuotesCount: Math.max(0, Math.round(toNum(stateValue.meta && stateValue.meta.lastQuotesCount))),
+      lastFxRefreshAt: textOrFallback(stateValue.meta && stateValue.meta.lastFxRefreshAt, ""),
+      lastFxCount: Math.max(0, Math.round(toNum(stateValue.meta && stateValue.meta.lastFxCount))),
       dashboardInflationEnabled: normalizeInflationEnabled(
         stateValue.meta && stateValue.meta.dashboardInflationEnabled
       ),

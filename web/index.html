@@ -58,6 +58,11 @@
       </div>
     </header>
 
+    <section class="freshness-strip" aria-label="Świeżość danych">
+      <span id="quoteFreshnessBadge" class="badge off">Notowania: brak synchronizacji</span>
+      <span id="fxFreshnessBadge" class="badge off">FX: brak synchronizacji</span>
+    </section>
+
     <nav class="tabs" id="tabs">
       <button class="tab active" data-view="dashboardView" data-icon-key="dashboard">
         <span class="tab-icon" aria-hidden="true">◌</span>
@@ -1375,6 +1380,43 @@
       </div>
     </aside>
 
+    <button id="fabQuickAddBtn" class="mobile-fab" type="button" aria-label="Szybko dodaj operację">
+      <span>+</span>
+    </button>
+    <div id="fabMenuBackdrop" class="sheet-backdrop" hidden></div>
+    <aside id="fabMenu" class="fab-menu" hidden>
+      <div class="more-sheet-head">
+        <strong>Szybka operacja</strong>
+        <button id="closeFabMenuBtn" type="button" class="btn secondary">Zamknij</button>
+      </div>
+      <div class="fab-menu-grid">
+        <button type="button" class="fab-menu-btn" data-quick-operation="cash">
+          <span class="fab-menu-icon">+</span>
+          <span>Gotówka</span>
+        </button>
+        <button type="button" class="fab-menu-btn" data-quick-operation="buy">
+          <span class="fab-menu-icon">↗</span>
+          <span>Kupno</span>
+        </button>
+        <button type="button" class="fab-menu-btn" data-quick-operation="sell">
+          <span class="fab-menu-icon">↘</span>
+          <span>Sprzedaż</span>
+        </button>
+      </div>
+    </aside>
+
+    <div id="recordSheetBackdrop" class="sheet-backdrop" hidden></div>
+    <aside id="recordSheet" class="record-sheet" hidden>
+      <div class="more-sheet-head">
+        <div class="record-sheet-head">
+          <strong id="recordSheetTitle">Szczegóły rekordu</strong>
+          <span id="recordSheetSubtitle" class="muted">Podgląd danych</span>
+        </div>
+        <button id="closeRecordSheetBtn" type="button" class="btn secondary">Zamknij</button>
+      </div>
+      <div id="recordSheetBody" class="record-sheet-body"></div>
+    </aside>
+
     <footer class="footer">
       <p>
         Dane trzymane lokalnie w przeglądarce. Wykonuj regularny eksport kopii.
@@ -1393,11 +1435,13 @@
 
     <div id="onboardingOverlay" class="onboarding-overlay" hidden>
       <div class="onboarding-card">
-        <span class="app-loading-badge">Start mobilny</span>
+        <span id="onboardingKicker" class="app-loading-badge">Start mobilny</span>
+        <div id="onboardingIcon" class="onboarding-hero">◎</div>
         <h2 id="onboardingTitle">Witaj w mobilnym Prywatnym Portfelu</h2>
         <p id="onboardingBody" class="muted">
           Ta wersja jest pod telefon: dolna nawigacja, szybsze operacje i prostsza praca na małym ekranie.
         </p>
+        <div id="onboardingStepMeta" class="onboarding-step-meta">Krok 1 z 3</div>
         <div class="onboarding-pills" id="onboardingPills">
           <span class="appearance-pill active">1</span>
           <span class="appearance-pill">2</span>

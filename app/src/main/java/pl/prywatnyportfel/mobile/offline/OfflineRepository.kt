@@ -435,6 +435,10 @@ class OfflineRepository(private val context: Context) {
                     .put("dashboardInflationEnabled", false)
                     .put("dashboardInflationRatePct", 0.0)
                     .put("mobileOnboardingSeen", false)
+                    .put("lastQuotesRefreshAt", "")
+                    .put("lastQuotesCount", 0)
+                    .put("lastFxRefreshAt", "")
+                    .put("lastFxCount", 0)
                     .put("createdAt", createdAt)
             )
             .put(
