@@ -1225,62 +1225,90 @@ function bindEvents() {
     event.preventDefault();
     void runAlertWorkflow();
   });
-  dom.realtimeConfigForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void saveRealtimeConfigFromForm();
-  });
-  dom.runRealtimeNowBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void runRealtimeNow();
-  });
-  dom.startRealtimeBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void toggleRealtimeCron(true);
-  });
-  dom.stopRealtimeBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void toggleRealtimeCron(false);
-  });
-  dom.notificationConfigForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void saveNotificationConfigFromForm();
-  });
-  dom.testNotificationBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void sendTestNotification();
-  });
-  dom.backupConfigForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void saveBackupConfigFromForm();
-  });
-  dom.runBackupNowBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void runBackupNow();
-  });
-  dom.verifyBackupBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void verifyBackupNow();
-  });
-  dom.refreshBackupRunsBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void refreshBackupRuns();
-  });
-  dom.refreshMonitoringBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void refreshMonitoringStatus();
-  });
-  dom.refreshHealthcheckBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void refreshHealthcheck();
-  });
-  dom.refreshErrorLogsBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void refreshErrorLogs();
-  });
-  dom.clearErrorLogsBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    void clearErrorLogsNow();
-  });
+  if (dom.realtimeConfigForm) {
+    dom.realtimeConfigForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveRealtimeConfigFromForm();
+    });
+  }
+  if (dom.runRealtimeNowBtn) {
+    dom.runRealtimeNowBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void runRealtimeNow();
+    });
+  }
+  if (dom.startRealtimeBtn) {
+    dom.startRealtimeBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void toggleRealtimeCron(true);
+    });
+  }
+  if (dom.stopRealtimeBtn) {
+    dom.stopRealtimeBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void toggleRealtimeCron(false);
+    });
+  }
+  if (dom.notificationConfigForm) {
+    dom.notificationConfigForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveNotificationConfigFromForm();
+    });
+  }
+  if (dom.testNotificationBtn) {
+    dom.testNotificationBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void sendTestNotification();
+    });
+  }
+  if (dom.backupConfigForm) {
+    dom.backupConfigForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveBackupConfigFromForm();
+    });
+  }
+  if (dom.runBackupNowBtn) {
+    dom.runBackupNowBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void runBackupNow();
+    });
+  }
+  if (dom.verifyBackupBtn) {
+    dom.verifyBackupBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void verifyBackupNow();
+    });
+  }
+  if (dom.refreshBackupRunsBtn) {
+    dom.refreshBackupRunsBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void refreshBackupRuns();
+    });
+  }
+  if (dom.refreshMonitoringBtn) {
+    dom.refreshMonitoringBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void refreshMonitoringStatus();
+    });
+  }
+  if (dom.refreshHealthcheckBtn) {
+    dom.refreshHealthcheckBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void refreshHealthcheck();
+    });
+  }
+  if (dom.refreshErrorLogsBtn) {
+    dom.refreshErrorLogsBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void refreshErrorLogs();
+    });
+  }
+  if (dom.clearErrorLogsBtn) {
+    dom.clearErrorLogsBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void clearErrorLogsNow();
+    });
+  }
   dom.liabilityForm.addEventListener("submit", onLiabilitySubmit);
   dom.liabilityCancelEditBtn.addEventListener("click", () => {
     resetLiabilityForm();
@@ -1437,14 +1465,22 @@ async function hydrateRealtimeAndNotifications() {
   } catch (error) {
     // ignore
   }
-  try {
-    await refreshBackupConfig({ silent: true });
-    await refreshBackupRuns({ silent: true });
-    await refreshMonitoringStatus({ silent: true });
-    await refreshHealthcheck({ silent: true });
-    await refreshErrorLogs({ silent: true });
-  } catch (error) {
-    // ignore
+  if (
+    dom.backupConfigForm ||
+    dom.backupRunsList ||
+    dom.monitoringTable ||
+    dom.healthcheckTable ||
+    dom.errorLogsTable
+  ) {
+    try {
+      await refreshBackupConfig({ silent: true });
+      await refreshBackupRuns({ silent: true });
+      await refreshMonitoringStatus({ silent: true });
+      await refreshHealthcheck({ silent: true });
+      await refreshErrorLogs({ silent: true });
+    } catch (error) {
+      // ignore
+    }
   }
 }
 
@@ -1909,11 +1945,19 @@ async function refreshExpertTools(options = {}) {
   await refreshRecommendations({ silent: true });
   await refreshAlertHistory({ silent: true });
   await refreshNotificationHistory({ silent: true });
-  await refreshBackupConfig({ silent: true });
-  await refreshBackupRuns({ silent: true });
-  await refreshMonitoringStatus({ silent: true });
-  await refreshHealthcheck({ silent: true });
-  await refreshErrorLogs({ silent: true });
+  if (
+    dom.backupConfigForm ||
+    dom.backupRunsList ||
+    dom.monitoringTable ||
+    dom.healthcheckTable ||
+    dom.errorLogsTable
+  ) {
+    await refreshBackupConfig({ silent: true });
+    await refreshBackupRuns({ silent: true });
+    await refreshMonitoringStatus({ silent: true });
+    await refreshHealthcheck({ silent: true });
+    await refreshErrorLogs({ silent: true });
+  }
   await refreshCandles({ silent: true });
   await refreshCatalyst({ silent: true });
   await refreshFundsRanking({ silent: true });
@@ -2358,6 +2402,9 @@ async function verifyBackupNow() {
 
 async function refreshBackupConfig(options = {}) {
   const silent = Boolean(options.silent);
+  if (!dom.backupConfigForm && !dom.backupInfo) {
+    return;
+  }
   if (!backendSync.available) {
     return;
   }
@@ -2373,6 +2420,9 @@ async function refreshBackupConfig(options = {}) {
 
 async function refreshBackupRuns(options = {}) {
   const silent = Boolean(options.silent);
+  if (!dom.backupRunsList) {
+    return;
+  }
   if (!backendSync.available) {
     return;
   }
@@ -2389,6 +2439,9 @@ async function refreshBackupRuns(options = {}) {
 
 async function refreshMonitoringStatus(options = {}) {
   const silent = Boolean(options.silent);
+  if (!dom.monitoringTable && !dom.monitoringInfo) {
+    return;
+  }
   if (!backendSync.available) {
     return;
   }
@@ -2404,6 +2457,9 @@ async function refreshMonitoringStatus(options = {}) {
 
 async function refreshHealthcheck(options = {}) {
   const silent = Boolean(options.silent);
+  if (!dom.healthcheckTable && !dom.healthcheckInfo) {
+    return;
+  }
   if (!backendSync.available) {
     return;
   }
@@ -2442,6 +2498,9 @@ function renderHealthcheckStatus(payload) {
 
 async function refreshErrorLogs(options = {}) {
   const silent = Boolean(options.silent);
+  if (!dom.errorLogsTable && !dom.errorLogsInfo) {
+    return;
+  }
   if (!backendSync.available) {
     return;
   }
@@ -2457,6 +2516,9 @@ async function refreshErrorLogs(options = {}) {
 }
 
 async function clearErrorLogsNow() {
+  if (!dom.errorLogsTable && !dom.errorLogsInfo) {
+    return;
+  }
   if (!backendSync.available) {
     window.alert("Backend offline. Czyszczenie logów niedostępne.");
     return;
