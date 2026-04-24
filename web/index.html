@@ -77,7 +77,7 @@
       </button>
       <button class="tab" data-view="appearanceView" data-icon-key="appearance">
         <span class="tab-icon" aria-hidden="true">◌</span>
-        <span class="tab-label">Wygląd</span>
+        <span class="tab-label">Styl</span>
       </button>
     </nav>
 
@@ -1283,14 +1283,15 @@
           <article class="panel">
             <div class="panel-head">
               <div>
-                <h2>Skórki i czytelność</h2>
+                <p class="eyebrow">Centrum stylu</p>
+                <h2>Personalizacja aplikacji</h2>
                 <p class="muted">
                   Dopasuj aplikację pod siebie. Zmiany zapisują się lokalnie i są przenoszone razem z kopią danych.
                 </p>
               </div>
               <button id="appearanceResetBtn" type="button" class="btn secondary">Przywróć domyślne</button>
             </div>
-            <h3>Wybór skórki</h3>
+            <h3>Motyw</h3>
             <div id="appearanceThemeGrid" class="appearance-grid"></div>
             <h3>Zestaw ikon</h3>
             <div id="appearanceIconGrid" class="appearance-grid compact"></div>
@@ -1332,7 +1333,7 @@
         <span>Raporty</span>
       </button>
       <button id="moreNavBtn" class="bottom-nav-tab" type="button">
-        <span class="bottom-nav-icon">✶</span>
+        <span class="bottom-nav-icon">⋯</span>
         <span>Więcej</span>
       </button>
     </nav>
@@ -1344,7 +1345,13 @@
         <button id="closeMoreSheetBtn" type="button" class="btn secondary">Zamknij</button>
       </div>
       <div class="more-sheet-grid">
-        <button type="button" class="more-sheet-btn" data-view="appearanceView">Wygląd</button>
+        <button type="button" class="more-sheet-btn" data-view="appearanceView">
+          <span class="more-sheet-btn-icon">◍</span>
+          <span>
+            <strong>Centrum stylu</strong>
+            <small>Motyw, ikony i rozmiar tekstu</small>
+          </span>
+        </button>
       </div>
     </aside>
 

@@ -175,13 +175,13 @@ const APPEARANCE_DEFAULTS = {
 
 const APPEARANCE_THEMES = {
   forest: {
-    label: "Leśny klasyk",
-    description: "Spokojny zielony motyw do codziennej pracy nad portfelem.",
+    label: "Portfel prywatny",
+    description: "Spokojny zielony motyw do codziennego pilnowania majątku.",
     swatches: ["#0e7a64", "#ff7f32", "#f3f6f1"]
   },
   midnight: {
-    label: "Giełdowa noc",
-    description: "Ciemny, kontrastowy układ pod dłuższe sesje i wykresy.",
+    label: "Nocny sejf",
+    description: "Ciemny, miękki układ pod wieczorne sprawdzanie portfela.",
     swatches: ["#7ad8c7", "#f5b24d", "#0d1319"]
   },
   gold: {
@@ -212,16 +212,16 @@ const APPEARANCE_ICON_SETS = {
     }
   },
   classic: {
-    label: "Klasyczne",
-    description: "Bardziej wyraźne ikony do codziennej pracy na desktopie.",
+    label: "Portfelowe",
+    description: "Własny zestaw ikon pod mobilny portfel, bez tradingowego hałasu.",
     icons: {
-      dashboard: "◎",
-      portfolios: "▥",
-      accounts: "⌘",
-      operations: "⇄",
-      reports: "◉",
-      tools: "✶",
-      appearance: "✺",
+      dashboard: "⌂",
+      portfolios: "▰",
+      accounts: "◇",
+      operations: "+",
+      reports: "⌁",
+      tools: "⋯",
+      appearance: "◍",
       features: "▧"
     }
   },
@@ -4777,7 +4777,7 @@ function renderAppearanceSettings() {
     .join("");
 
   if (dom.appearanceSummary) {
-    dom.appearanceSummary.textContent = `Aktywna skórka: ${theme.label} | Ikony: ${iconSet.label} | Czcionka: ${fontScale.label}`;
+    dom.appearanceSummary.textContent = `Aktywny motyw: ${theme.label} | Ikony: ${iconSet.label} | Czcionka: ${fontScale.label}`;
   }
   dom.appearancePreview.innerHTML = buildAppearancePreviewMarkup(theme, iconSet, fontScale);
 }
@@ -4794,7 +4794,7 @@ function buildAppearancePreviewMarkup(theme, iconSet, fontScale) {
         <div class="appearance-preview-controls">
           <span class="appearance-pill active">${escapeHtml(icons.dashboard)} Kokpit</span>
           <span class="appearance-pill">${escapeHtml(icons.reports)} Raporty</span>
-          <span class="appearance-pill">${escapeHtml(icons.tools)} Narzędzia</span>
+          <span class="appearance-pill">${escapeHtml(icons.appearance)} Styl</span>
         </div>
       </div>
       <div class="appearance-preview-body">
