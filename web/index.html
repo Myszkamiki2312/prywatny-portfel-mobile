@@ -140,18 +140,19 @@
               <button type="button" class="btn secondary chart-range-btn" data-range-key="90">3M</button>
               <button type="button" class="btn secondary chart-range-btn" data-range-key="180">6M</button>
               <button type="button" class="btn secondary chart-range-btn" data-range-key="365">1R</button>
-              <button type="button" class="btn secondary chart-range-btn active" data-range-key="all">ALL</button>
+              <button type="button" class="btn secondary chart-range-btn active" data-range-key="all">Całość</button>
             </div>
             <div class="chart-toolbar-actions">
               <div id="dashboardChartModeControls" class="chart-mode-group" aria-label="Tryb wykresu kokpitu">
                 <button type="button" class="btn secondary chart-mode-btn active" data-chart-mode="value">Wartość</button>
                 <button type="button" class="btn secondary chart-mode-btn" data-chart-mode="return">% stopy zwrotu</button>
               </div>
-              <button id="dashboardChartResetZoomBtn" type="button" class="btn secondary">Reset zoomu</button>
-              <button id="dashboardChartExportBtn" type="button" class="btn secondary">Eksport PNG</button>
+              <button id="dashboardChartResetZoomBtn" type="button" class="btn secondary">Reset</button>
+              <button id="dashboardChartExportBtn" type="button" class="btn secondary">PNG</button>
             </div>
           </div>
           <div id="dashboardChartRangeInfo" class="hint compact"></div>
+          <p class="chart-mobile-hint">Przytrzymaj i przeciągnij po wykresie, żeby przybliżyć zakres. Po przybliżeniu przeciągaj bokiem, żeby przesuwać widok.</p>
           <div class="chart-wrap">
             <canvas id="dashboardChart" width="1200" height="280"></canvas>
           </div>
@@ -651,18 +652,19 @@
               <button type="button" class="btn secondary chart-range-btn" data-range-key="90">3M</button>
               <button type="button" class="btn secondary chart-range-btn" data-range-key="180">6M</button>
               <button type="button" class="btn secondary chart-range-btn" data-range-key="365">1R</button>
-              <button type="button" class="btn secondary chart-range-btn active" data-range-key="all">ALL</button>
+              <button type="button" class="btn secondary chart-range-btn active" data-range-key="all">Całość</button>
             </div>
             <div class="chart-toolbar-actions">
               <div id="reportChartModeControls" class="chart-mode-group" aria-label="Tryb wykresu raportu">
                 <button type="button" class="btn secondary chart-mode-btn active" data-chart-mode="value">Wartość</button>
                 <button type="button" class="btn secondary chart-mode-btn" data-chart-mode="return">% stopy zwrotu</button>
               </div>
-              <button id="reportChartResetZoomBtn" type="button" class="btn secondary">Reset zoomu</button>
-              <button id="reportChartExportBtn" type="button" class="btn secondary">Eksport PNG</button>
+              <button id="reportChartResetZoomBtn" type="button" class="btn secondary">Reset</button>
+              <button id="reportChartExportBtn" type="button" class="btn secondary">PNG</button>
             </div>
           </div>
           <div id="reportChartRangeInfo" class="hint compact"></div>
+          <p class="chart-mobile-hint">Dotknij punktu wykresu, żeby podejrzeć datę i wartość. Przeciągnięcie zaznacza zakres.</p>
           <div class="chart-wrap">
             <canvas id="reportChart" width="1200" height="300"></canvas>
           </div>

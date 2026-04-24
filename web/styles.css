@@ -636,7 +636,9 @@ textarea:focus {
 
 .stat-card {
   border: 1px solid var(--line);
-  background: var(--surface-soft);
+  background:
+    radial-gradient(circle at 96% 0%, rgba(14, 122, 100, 0.08), transparent 38%),
+    var(--surface-soft);
   border-radius: 16px;
   padding: 0.75rem;
 }
@@ -670,6 +672,14 @@ textarea:focus {
     linear-gradient(180deg, var(--panel-strong) 0%, var(--surface-soft) 100%);
   padding: 0.8rem;
   margin-top: 0.6rem;
+}
+
+.chart-mobile-hint {
+  display: none;
+  margin: 0.35rem 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
 }
 
 canvas {
@@ -1453,6 +1463,10 @@ hr {
     gap: 0.7rem;
   }
 
+  .chart-mobile-hint {
+    display: block;
+  }
+
   .dashboard-inflation-toggle,
   .dashboard-inflation-rate,
   .control.inline {
@@ -1565,6 +1579,23 @@ hr {
   .dashboard-actions .btn,
   .panel-actions .btn {
     flex: 1 1 calc(50% - 0.55rem);
+  }
+
+  .chart-range-group,
+  .chart-mode-group {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .chart-mode-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chart-range-btn,
+  .chart-mode-btn {
+    padding-inline: 0.35rem;
+    font-size: 0.74rem;
   }
 }
 
@@ -2144,15 +2175,17 @@ hr {
 
 .table-empty-state {
   display: grid;
-  gap: 0.3rem;
+  gap: 0.45rem;
   border: 1px dashed var(--line);
   border-radius: 18px;
   padding: 1rem;
-  background: var(--surface-soft);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(14, 122, 100, 0.1), transparent 42%),
+    var(--surface-soft);
 }
 
 .table-empty-state strong {
-  font-size: 0.95rem;
+  font-size: 1rem;
 }
 
 .table-empty-state p {

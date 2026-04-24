@@ -320,9 +320,9 @@ const onboardingState = {
   items: [
     {
       kicker: "Start mobilny",
-      icon: "◎",
+      icon: "⌂",
       title: "Witaj w mobilnym Prywatnym Portfelu",
-      body: "Masz tu układ ustawiony pod telefon: dolna nawigacja, prostsze ekrany i mniej ścisku na małym ekranie."
+      body: "Masz tu prywatny portfel ustawiony pod telefon: spokojny kokpit, dolna nawigacja i najważniejsze akcje pod kciukiem."
     },
     {
       kicker: "Szybki start",
@@ -332,9 +332,9 @@ const onboardingState = {
     },
     {
       kicker: "Lepszy podgląd",
-      icon: "◫",
-      title: "Mobilne karty i sticky akcje",
-      body: "Listy pokazują się jako karty. Dotknij rekord, żeby zobaczyć szczegóły w dolnym panelu, a zapisywanie trzyma się dołu ekranu."
+      icon: "⌁",
+      title: "Wykresy i karty",
+      body: "Dotknij punktu wykresu, żeby zobaczyć datę i wartość. Listy pokazują się jako karty, więc łatwiej je czytać na małym ekranie."
     }
   ]
 };
@@ -8872,7 +8872,7 @@ function renderTable(container, headers, rows) {
   }
   if (!rows || rows.length === 0) {
     container.innerHTML =
-      '<div class="table-empty-state"><strong>Brak danych</strong><p>Ten widok pokaże się, gdy dodasz pierwsze rekordy albo odświeżysz dane.</p></div>';
+      '<div class="table-empty-state"><strong>Tu jeszcze nic nie ma</strong><p>Dodaj pierwszą operację przyciskiem + albo odśwież dane, jeśli już masz walory w portfelu.</p></div>';
     return;
   }
   const head = `<tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>`;
