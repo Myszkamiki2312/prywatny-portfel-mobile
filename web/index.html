@@ -29,6 +29,7 @@
     </div>
     <header class="topbar">
       <div class="brand">
+        <span class="brand-mark" aria-hidden="true">P</span>
         <p class="eyebrow">Lokalna aplikacja inwestycyjna</p>
         <h1>Prywatny Portfel</h1>
       </div>
@@ -43,21 +44,15 @@
             <option value="CHF">CHF</option>
           </select>
         </label>
-        <button id="themeToggleBtn" class="btn secondary" type="button" aria-pressed="false">Tryb ciemny</button>
-        <button id="exportBackupBtn" class="btn secondary">Eksport kopii</button>
+        <button id="themeToggleBtn" class="btn secondary topbar-icon-btn" type="button" aria-pressed="false">Tryb ciemny</button>
+        <button id="exportBackupBtn" class="btn secondary topbar-utility-btn">Eksport kopii</button>
         <label class="btn secondary file-btn">
           Import kopii
           <input id="importBackupInput" type="file" accept="application/json" />
         </label>
-        <button id="refreshQuotesBtn" class="btn secondary">Odśwież notowania</button>
-        <span id="backendStatus" class="badge off">Backend: offline</span>
+        <button id="refreshQuotesBtn" class="btn secondary topbar-icon-btn">Odśwież</button>
       </div>
     </header>
-
-    <section class="freshness-strip" aria-label="Świeżość danych">
-      <span id="quoteFreshnessBadge" class="badge off">Notowania: brak synchronizacji</span>
-      <span id="fxFreshnessBadge" class="badge off">FX: brak synchronizacji</span>
-    </section>
 
     <nav class="tabs" id="tabs">
       <button class="tab active" data-view="dashboardView" data-icon-key="dashboard">
