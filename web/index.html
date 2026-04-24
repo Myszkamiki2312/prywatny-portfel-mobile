@@ -303,10 +303,12 @@
                   <option value="GBP">GBP</option>
                   <option value="CHF">CHF</option>
                 </select>
+                <small>Waluta samego waloru, np. AAPL = USD, CDR = PLN.</small>
               </label>
               <label class="control">
                 <span>Cena bieżąca</span>
                 <input name="currentPrice" type="number" step="0.0001" min="0" value="0" />
+                <small>Aktualna cena rynkowa waloru w wybranej walucie.</small>
               </label>
               <label class="control">
                 <span>Ryzyko (1-10)</span>
@@ -445,10 +447,12 @@
               <label class="control">
                 <span>Cena</span>
                 <input type="number" name="price" step="0.0001" />
+                <small>Cena zakupu albo sprzedaży jednej sztuki waloru.</small>
               </label>
               <label class="control">
                 <span>Kwota gotówkowa</span>
                 <input type="number" name="amount" step="0.01" />
+                <small>Łączna kwota operacji. Przy kupnie/sprzedaży może zostać wyliczona z ceny i ilości.</small>
               </label>
               <label class="control">
                 <span>Prowizja</span>
@@ -463,6 +467,7 @@
                   <option value="GBP">GBP</option>
                   <option value="CHF">CHF</option>
                 </select>
+                <small>Waluta operacji. Wartość portfela i wykres są przeliczane na walutę bazową.</small>
               </label>
               <label class="control">
                 <span>Tagi (po przecinku)</span>

@@ -70,15 +70,27 @@ export function renderDashboard(deps) {
     escapeHtml(holding.ticker),
     escapeHtml(holding.name),
     escapeHtml(holding.type),
+    escapeHtml(holding.currency || (state.meta && state.meta.baseCurrency) || "PLN"),
     formatFloat(holding.qty),
     formatMoney(holding.price, holding.currency),
     formatMoney(holding.value),
     formatMoney(holding.unrealized),
     `${formatFloat(holding.share)}%`
   ]);
+  const baseCurrency = (state.meta && state.meta.baseCurrency) || "PLN";
   renderTable(
     dom.dashboardDetails,
-    ["Ticker", "Nazwa", "Typ", "Ilość", "Cena", "Wartość", "Niezrealizowany P/L", "Udział"],
+    [
+      "Ticker",
+      "Nazwa",
+      "Typ",
+      "Waluta",
+      "Ilość",
+      "Cena waloru",
+      `Wartość (${baseCurrency})`,
+      `P/L (${baseCurrency})`,
+      "Udział"
+    ],
     rows
   );
 

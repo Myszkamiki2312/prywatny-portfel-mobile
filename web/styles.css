@@ -478,6 +478,12 @@ body[data-theme="ice"] {
   color: var(--muted);
 }
 
+.control > small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .control.inline {
   min-width: 160px;
 }
@@ -736,6 +742,21 @@ td code {
 .badge.off {
   background: var(--badge-off-bg);
   color: var(--badge-off-text);
+}
+
+.currency-stack {
+  display: inline-grid;
+  gap: 0.08rem;
+  line-height: 1.15;
+}
+
+.currency-stack strong {
+  font-size: 0.86rem;
+}
+
+.currency-stack small {
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 
 .hint,

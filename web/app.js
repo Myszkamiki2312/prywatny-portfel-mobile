@@ -6250,6 +6250,7 @@ function renderAssets() {
     escapeHtml(asset.ticker),
     escapeHtml(asset.name),
     escapeHtml(asset.type),
+    renderCurrencyCell(asset.currency, asset.quoteCurrency),
     formatMoney(asset.currentPrice, asset.currency),
     escapeHtml(String(asset.risk)),
     escapeHtml(asset.sector || "-"),
@@ -6264,7 +6265,7 @@ function renderAssets() {
       `<button class="btn danger" data-action="delete-asset" data-id="${asset.id}">Usuń</button>`
     ].join(" ")
   ]);
-  renderTable(dom.assetList, ["Ticker", "Nazwa", "Typ", "Cena", "Ryzyko", "Sektor", "Tagi", "Fav", "Akcje"], rows);
+  renderTable(dom.assetList, ["Ticker", "Nazwa", "Typ", "Waluta", "Cena waloru", "Ryzyko", "Sektor", "Tagi", "Fav", "Akcje"], rows);
 }
 
 function renderOperations() {
@@ -7738,6 +7739,7 @@ function computeMetrics(portfolioId, options = {}) {
       industry: asset ? asset.industry : "",
       benchmark: asset ? asset.benchmark : "",
       tags: asset ? asset.tags : [],
+      quoteCurrency: asset ? normalizeCurrency(asset.quoteCurrency, assetCurrency) : assetCurrency,
       qty: holding.qty,
       price,
       value,
@@ -8883,6 +8885,16 @@ function renderTable(container, headers, rows) {
     )
     .join("");
   container.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function renderCurrencyCell(currency, quoteCurrency) {
+  const assetCurrency = normalizeCurrency(currency, state.meta.baseCurrency);
+  const feedCurrency = normalizeCurrency(quoteCurrency, assetCurrency);
+  const feedLabel =
+    feedCurrency && feedCurrency !== assetCurrency
+      ? `<small>feed: ${escapeHtml(feedCurrency)}</small>`
+      : `<small>feed: zgodny</small>`;
+  return `<span class="currency-stack"><strong>${escapeHtml(assetCurrency)}</strong>${feedLabel}</span>`;
 }
 
 function importOperations(rows) {
