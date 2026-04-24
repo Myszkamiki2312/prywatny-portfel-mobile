@@ -602,6 +602,10 @@ function onJumpButtonClick(event) {
   if (!targetId) {
     return;
   }
+  const view = event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.view : "";
+  if (view) {
+    activateView(view);
+  }
   if (targetId === "quickOperationPanel" || targetId === "operationFormPanel") {
     activateOperationPane("add");
   } else if (targetId === "operationHistoryPanel") {
@@ -635,6 +639,7 @@ function onQuickOperationClick(event) {
     typeInput.value =
       kind === "cash" ? "Operacja gotówkowa" : kind === "buy" ? "Kupno waloru" : "Sprzedaż waloru";
   }
+  syncOperationFormMode();
   openFormStep(dom.operationForm, kind === "cash" ? 0 : 1);
   if (dom.quickOperationInfo) {
     dom.quickOperationInfo.textContent =
@@ -650,6 +655,42 @@ function onQuickOperationClick(event) {
     focusTarget.focus();
   }
   showToast(dom.quickOperationInfo ? dom.quickOperationInfo.textContent : "Ustawiono szybką operację.", "info");
+}
+
+function syncOperationFormMode() {
+  if (!dom.operationForm) {
+    return;
+  }
+  const typeInput = dom.operationForm.querySelector('[name="type"]');
+  const type = String(typeInput ? typeInput.value : "");
+  const isCash = type === "Operacja gotówkowa" || type === "Przelew gotówkowy" || type === "Przelewy gotówkowe";
+  const isBuySell = type === "Kupno waloru" || type === "Sprzedaż waloru";
+  const isConversion = type === "Konwersja waloru" || type === "Konwersje walorów";
+  const visibleFields = new Set(
+    isCash
+      ? ["date", "type", "portfolioId", "accountId", "amount", "currency", "tags", "note"]
+      : isBuySell
+        ? ["date", "type", "portfolioId", "accountId", "assetId", "quantity", "price", "amount", "fee", "currency", "tags", "note"]
+        : isConversion
+          ? ["date", "type", "portfolioId", "accountId", "assetId", "targetAssetId", "quantity", "targetQuantity", "price", "amount", "fee", "currency", "tags", "note"]
+          : ["date", "type", "portfolioId", "accountId", "assetId", "targetAssetId", "quantity", "targetQuantity", "price", "amount", "fee", "currency", "tags", "note"]
+  );
+  dom.operationForm.querySelectorAll(".control").forEach((control) => {
+    const field = control.querySelector("[name]");
+    if (!field) {
+      return;
+    }
+    control.classList.toggle("operation-field-hidden", !visibleFields.has(field.name));
+  });
+  dom.operationForm.querySelectorAll(".form-step").forEach((step) => {
+    const controls = Array.from(step.querySelectorAll(".control"));
+    const hasVisibleControl = controls.some((control) => !control.classList.contains("operation-field-hidden"));
+    step.classList.toggle("operation-step-hidden", !hasVisibleControl);
+    if (!hasVisibleControl) {
+      step.open = false;
+    }
+  });
+  dom.operationForm.dataset.operationMode = isCash ? "cash" : isBuySell ? "trade" : isConversion ? "conversion" : "advanced";
 }
 
 function enhanceMobileForms() {
@@ -828,6 +869,7 @@ function cacheDom() {
   dom.dashboardChartResetZoomBtn = document.getElementById("dashboardChartResetZoomBtn");
   dom.dashboardChartExportBtn = document.getElementById("dashboardChartExportBtn");
   dom.dashboardDetails = document.getElementById("dashboardDetails");
+  dom.dashboardEmptyGuide = document.getElementById("dashboardEmptyGuide");
 
   dom.portfolioForm = document.getElementById("portfolioForm");
   dom.portfolioEditId = document.getElementById("portfolioEditId");
@@ -1129,6 +1171,9 @@ function bindEvents() {
     resetAssetForm();
   });
   dom.operationForm.addEventListener("submit", onOperationSubmit);
+  if (dom.operationTypeSelect) {
+    dom.operationTypeSelect.addEventListener("change", syncOperationFormMode);
+  }
   dom.operationCancelEditBtn.addEventListener("click", () => {
     resetOperationForm();
   });
@@ -1544,16 +1589,28 @@ async function hydrateBrokerCatalog() {
 }
 
 async function onRefreshQuotes() {
+  const button = dom.refreshQuotesBtn;
+  const originalLabel = button ? button.textContent : "";
+  const setRefreshState = (label, disabled = false) => {
+    if (!button) {
+      return;
+    }
+    button.textContent = label;
+    button.disabled = disabled;
+    button.classList.toggle("is-loading", disabled);
+  };
   if (!backendSync.available) {
-    window.alert("Backend jest offline. Uruchom serwer, aby odświeżyć notowania.");
+    showToast("Odświeżanie działa po uruchomieniu lokalnego backendu.", "error");
     return;
   }
   const tickers = state.assets.map((asset) => asset.ticker).filter(Boolean);
   if (!tickers.length) {
-    window.alert("Brak walorów do odświeżenia notowań.");
+    showToast("Dodaj najpierw walor, żeby było co odświeżyć.", "info");
     return;
   }
   backendSync.pushInFlight = true;
+  setRefreshState("Odświeżam…", true);
+  showToast("Odświeżam notowania i kursy FX…", "info");
   updateBackendStatus();
   try {
     const payload = await apiRequest("/quotes/refresh", {
@@ -1565,15 +1622,17 @@ async function onRefreshQuotes() {
     applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
     saveState({ skipBackend: true });
     renderAll();
-    window.alert(
-      `Zaktualizowano notowania: ${quotes.length} walorów.${payload.fxUpdated ? ` Kursy FX: ${payload.fxUpdated}.` : ""}`
+    showToast(
+      `Zaktualizowano: ${quotes.length} walorów${payload.fxUpdated ? `, FX: ${payload.fxUpdated}` : ""}.`,
+      "info"
     );
   } catch (error) {
     backendSync.available = false;
     updateBackendStatus();
-    window.alert("Nie udało się odświeżyć notowań z backendu.");
+    showToast("Nie udało się odświeżyć notowań.", "error");
   } finally {
     backendSync.pushInFlight = false;
+    setRefreshState(originalLabel || "Odśwież", false);
     updateBackendStatus();
   }
 }
@@ -5184,6 +5243,7 @@ function resetOperationForm() {
     if (currencyInput) {
       currencyInput.value = state.meta.baseCurrency;
     }
+    syncOperationFormMode();
     openFormStep(dom.operationForm, 0);
   }
 }
@@ -5291,6 +5351,7 @@ function startOperationEdit(operationId) {
   if (noteInput) {
     noteInput.value = operation.note || "";
   }
+  syncOperationFormMode();
   openFormStep(form, 0);
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }

@@ -20,6 +20,17 @@ export function renderDashboard(deps) {
 
   const portfolioId = dom.dashboardPortfolioSelect.value || "";
   const metrics = computeMetrics(portfolioId);
+  const portfolioOperations = Array.isArray(state.operations)
+    ? state.operations.filter((operation) => !portfolioId || operation.portfolioId === portfolioId)
+    : [];
+  const isEmptyPortfolio =
+    (!Array.isArray(metrics.holdings) || metrics.holdings.length === 0) &&
+    portfolioOperations.length === 0 &&
+    Number(metrics.marketValue || 0) === 0 &&
+    Number(metrics.cashTotal || 0) === 0;
+  if (dom.dashboardEmptyGuide) {
+    dom.dashboardEmptyGuide.hidden = !isEmptyPortfolio;
+  }
   const nominalSeries = Array.isArray(dashboardSeries) ? dashboardSeries : [];
   const inflationEnabled = Boolean(state.meta && state.meta.dashboardInflationEnabled);
   const inflationRatePct = Number(state.meta && state.meta.dashboardInflationRatePct) || 0;

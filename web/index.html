@@ -134,6 +134,30 @@
               <span id="statYearlyChangeValue" class="stat-card-meta">Brak pełnego zakresu</span>
             </article>
           </div>
+          <div id="dashboardEmptyGuide" class="dashboard-empty-guide" hidden>
+            <div>
+              <p class="eyebrow">Pierwszy start</p>
+              <h3>Dodaj pierwszą operację krok po kroku</h3>
+              <p>Najprostsza ścieżka: najpierw wpłać gotówkę, potem dodaj walor i dopiero zrób kupno.</p>
+            </div>
+            <div class="first-flow-steps">
+              <button type="button" class="first-flow-step" data-quick-operation="cash">
+                <span>1</span>
+                <strong>Wpłata gotówki</strong>
+                <small>Ustaw kwotę startową portfela.</small>
+              </button>
+              <button type="button" class="first-flow-step" data-view="accountsView" data-jump-target="assetFormPanel">
+                <span>2</span>
+                <strong>Dodaj walor</strong>
+                <small>Wpisz ticker, nazwę i walutę waloru.</small>
+              </button>
+              <button type="button" class="first-flow-step" data-quick-operation="buy">
+                <span>3</span>
+                <strong>Kupno</strong>
+                <small>Wybierz walor, ilość i cenę zakupu.</small>
+              </button>
+            </div>
+          </div>
           <div class="chart-toolbar">
             <div id="dashboardChartRangeControls" class="chart-range-group" aria-label="Zakres wykresu kokpitu">
               <button type="button" class="btn secondary chart-range-btn" data-range-key="30">1M</button>
@@ -390,6 +414,11 @@
                 <h2>Szybka operacja</h2>
                 <p class="muted">Jednym kliknięciem ustawiamy prosty formularz pod gotówkę, kupno albo sprzedaż.</p>
               </div>
+            </div>
+            <div class="first-flow-mini" aria-label="Pierwsza operacja krok po kroku">
+              <span>1. Gotówka</span>
+              <span>2. Walor</span>
+              <span>3. Kupno</span>
             </div>
             <div class="quick-operation-grid">
               <button type="button" class="btn quick-operation-btn" data-quick-operation="cash">+ Gotówka</button>
