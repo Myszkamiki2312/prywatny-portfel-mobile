@@ -2,6 +2,12 @@
 
 const STORAGE_KEY = "prywatny-portfel-state-v1";
 const LEGACY_STORAGE_KEYS = ["myfund-solo-state-v1"];
+const CLOUD_SYNC_KEY = "prywatny-portfel-cloud-sync-v1";
+const CLOUD_ONLY_DATA = true;
+const SUPABASE_APP_CONFIG =
+  typeof window !== "undefined" && window.PRIVATE_PORTFOLIO_SUPABASE
+    ? window.PRIVATE_PORTFOLIO_SUPABASE
+    : {};
 const API_BASE = "/api";
 const SOLO_PLAN = "Expert";
 const PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"];
@@ -260,6 +266,7 @@ const APPEARANCE_FONT_SCALES = {
 };
 
 let state = loadState();
+let cloudSyncConfig = loadCloudSyncConfig();
 const dom = {};
 const backendSync = {
   available: false,
@@ -274,6 +281,12 @@ const backendSync = {
   metricsRequestSeq: 0,
   healthProbe: null,
   resizeTimer: 0
+};
+const cloudSyncRuntime = {
+  pushTimer: 0,
+  pushInFlight: false,
+  pullInFlight: false,
+  suppressPush: false
 };
 const candlesView = {
   all: [],
@@ -362,10 +375,19 @@ async function init() {
   cacheDom();
   patchMobileAlertUi();
   applyAppearanceSettings();
+  renderCloudSyncForm();
+  renderCloudAuthForm();
   seedStaticSelects();
   enhanceMobileForms();
   bindEvents();
   resetOperationForm();
+  if (shouldBlockForCloudAuth()) {
+    renderAll();
+    hideAppLoadingOverlay();
+    openCloudAuthOverlay();
+    return;
+  }
+  await pullCloudState({ silent: true, createIfMissing: true });
   await hydrateFromBackend();
   renderAll();
   hideAppLoadingOverlay();
@@ -476,6 +498,513 @@ function completeOnboarding() {
   }
 }
 
+function defaultCloudSyncConfig() {
+  return {
+    enabled: true,
+    url: String(SUPABASE_APP_CONFIG.url || "").trim().replace(/\/+$/, ""),
+    anonKey: String(SUPABASE_APP_CONFIG.anonKey || "").trim(),
+    email: "",
+    accessToken: "",
+    refreshToken: "",
+    userId: "",
+    lastSyncAt: "",
+    lastPullAt: "",
+    lastError: ""
+  };
+}
+
+function loadCloudSyncConfig() {
+  try {
+    const raw = localStorage.getItem(CLOUD_SYNC_KEY);
+    return normalizeCloudSyncConfig(raw ? JSON.parse(raw) : {});
+  } catch (error) {
+    return defaultCloudSyncConfig();
+  }
+}
+
+function normalizeCloudSyncConfig(input) {
+  const fallback = defaultCloudSyncConfig();
+  const value = input && typeof input === "object" ? input : {};
+  return {
+    enabled: CLOUD_ONLY_DATA ? true : Boolean(value.enabled),
+    url: String(SUPABASE_APP_CONFIG.url || value.url || fallback.url || "").trim().replace(/\/+$/, ""),
+    anonKey: String(SUPABASE_APP_CONFIG.anonKey || value.anonKey || fallback.anonKey || "").trim(),
+    email: String(value.email || "").trim(),
+    accessToken: String(value.accessToken || ""),
+    refreshToken: String(value.refreshToken || ""),
+    userId: String(value.userId || ""),
+    lastSyncAt: String(value.lastSyncAt || ""),
+    lastPullAt: String(value.lastPullAt || ""),
+    lastError: String(value.lastError || fallback.lastError)
+  };
+}
+
+function saveCloudSyncConfig() {
+  localStorage.setItem(CLOUD_SYNC_KEY, JSON.stringify(cloudSyncConfig));
+  renderCloudSyncForm();
+}
+
+function renderCloudSyncForm() {
+  if (!dom.cloudSyncForm) {
+    return;
+  }
+  setFormField(dom.cloudSyncForm, "url", cloudSyncConfig.url);
+  setFormField(dom.cloudSyncForm, "anonKey", cloudSyncConfig.anonKey);
+  setFormField(dom.cloudSyncForm, "email", cloudSyncConfig.email);
+  setFormField(dom.cloudSyncForm, "password", "");
+  setFormField(dom.cloudSyncForm, "enabled", Boolean(cloudSyncConfig.enabled));
+  updateCloudSyncInfo();
+}
+
+function renderCloudAuthForm() {
+  if (!dom.cloudAuthForm) {
+    return;
+  }
+  setFormField(dom.cloudAuthForm, "email", cloudSyncConfig.email);
+  setFormField(dom.cloudAuthForm, "password", "");
+  if (dom.cloudAuthUrlInput) {
+    dom.cloudAuthUrlInput.value = cloudSyncConfig.url;
+    dom.cloudAuthUrlInput.disabled = Boolean(SUPABASE_APP_CONFIG.url);
+  }
+  if (dom.cloudAuthAnonKeyInput) {
+    dom.cloudAuthAnonKeyInput.value = cloudSyncConfig.anonKey;
+    dom.cloudAuthAnonKeyInput.disabled = Boolean(SUPABASE_APP_CONFIG.anonKey);
+  }
+}
+
+function shouldBlockForCloudAuth() {
+  return CLOUD_ONLY_DATA && (!cloudSyncConfig.accessToken || !cloudSyncConfig.userId);
+}
+
+function openCloudAuthOverlay(message = "") {
+  if (!dom.cloudAuthOverlay) {
+    return;
+  }
+  renderCloudAuthForm();
+  if (dom.cloudAuthInfo) {
+    dom.cloudAuthInfo.textContent =
+      message ||
+      (cloudSyncConfig.url && cloudSyncConfig.anonKey
+        ? "Jeśli konto nie istnieje, aplikacja spróbuje je utworzyć. Supabase może wysłać e-mail potwierdzający."
+        : "Brakuje konfiguracji Supabase. Developer musi wpisać URL i anon key w aplikacji.");
+  }
+  dom.cloudAuthOverlay.hidden = false;
+}
+
+function closeCloudAuthOverlay() {
+  if (dom.cloudAuthOverlay) {
+    dom.cloudAuthOverlay.hidden = true;
+  }
+}
+
+function updateCloudSyncInfo(message = "") {
+  if (!dom.cloudSyncInfo) {
+    return;
+  }
+  const parts = [];
+  if (message) {
+    parts.push(message);
+  }
+  parts.push(cloudSyncConfig.userId ? `Zalogowano: ${cloudSyncConfig.email || cloudSyncConfig.userId}` : "Nie zalogowano.");
+  parts.push(cloudSyncConfig.enabled ? "Autosync: włączony." : "Autosync: wyłączony.");
+  if (cloudSyncConfig.lastSyncAt) {
+    parts.push(`Ostatnie wysłanie: ${formatDateTime(cloudSyncConfig.lastSyncAt) || cloudSyncConfig.lastSyncAt}.`);
+  }
+  if (cloudSyncConfig.lastPullAt) {
+    parts.push(`Ostatnie pobranie: ${formatDateTime(cloudSyncConfig.lastPullAt) || cloudSyncConfig.lastPullAt}.`);
+  }
+  if (cloudSyncConfig.lastError && !/permission denied|app_states/i.test(cloudSyncConfig.lastError)) {
+    parts.push(`Ostatni błąd: ${cloudSyncConfig.lastError}`);
+  }
+  dom.cloudSyncInfo.textContent = parts.join(" ");
+  if (dom.cloudAccountStatus) {
+    dom.cloudAccountStatus.textContent = cloudSyncConfig.userId ? "Połączono z chmurą" : "Nie zalogowano";
+  }
+  if (dom.cloudAccountMeta) {
+    dom.cloudAccountMeta.textContent = cloudSyncConfig.userId
+      ? cloudSyncConfig.email || "Sesja aktywna"
+      : "Zaloguj się na ekranie startowym.";
+  }
+  if (dom.cloudSyncLoginBtn) {
+    dom.cloudSyncLoginBtn.hidden = Boolean(cloudSyncConfig.userId);
+  }
+  if (dom.cloudSyncSaveConfigBtn) {
+    dom.cloudSyncSaveConfigBtn.hidden = true;
+  }
+  if (dom.cloudSyncPushBtn) {
+    dom.cloudSyncPushBtn.hidden = true;
+  }
+  if (dom.cloudSyncPullBtn) {
+    dom.cloudSyncPullBtn.hidden = true;
+  }
+  if (dom.cloudSyncLogoutBtn) {
+    dom.cloudSyncLogoutBtn.hidden = !cloudSyncConfig.userId;
+  }
+}
+
+function onCloudSyncConfigSubmit(event) {
+  event.preventDefault();
+  const formValue = formToObject(dom.cloudSyncForm);
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    enabled: CLOUD_ONLY_DATA ? true : Boolean(formValue.enabled),
+    url: formValue.url,
+    anonKey: formValue.anonKey,
+    email: formValue.email,
+    lastError: ""
+  });
+  saveCloudSyncConfig();
+  showToast("Konfiguracja Supabase zapisana lokalnie.", "info");
+}
+
+function assertCloudSyncReady({ requireSession = true } = {}) {
+  if (!cloudSyncConfig.url || !cloudSyncConfig.anonKey) {
+    throw new Error("Uzupełnij Supabase URL i anon public key.");
+  }
+  if (requireSession && (!cloudSyncConfig.accessToken || !cloudSyncConfig.userId)) {
+    throw new Error("Najpierw zaloguj konto Supabase.");
+  }
+}
+
+async function supabaseRequest(path, options = {}) {
+  assertCloudSyncReady({ requireSession: Boolean(options.requireSession) });
+  const headers = {
+    apikey: cloudSyncConfig.anonKey,
+    Authorization: `Bearer ${options.useAnonAuth ? cloudSyncConfig.anonKey : cloudSyncConfig.accessToken || cloudSyncConfig.anonKey}`,
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+  const response = await fetch(`${cloudSyncConfig.url}${path}`, {
+    method: options.method || "GET",
+    headers,
+    body: options.body == null ? undefined : JSON.stringify(options.body)
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (error) {
+    payload = { message: text };
+  }
+  if (!response.ok) {
+    const message = normalizeSupabaseError(payload, response.status);
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function normalizeSupabaseError(payload, status) {
+  const raw = String(
+    (payload && (payload.error_description || payload.msg || payload.message || payload.error)) ||
+      `Supabase HTTP ${status}`
+  );
+  const lower = raw.toLowerCase();
+  if (lower.includes("password") && (lower.includes("weak") || lower.includes("short") || lower.includes("6"))) {
+    return "Hasło jest za słabe. Użyj minimum 6 znaków, najlepiej z cyfrą albo znakiem specjalnym.";
+  }
+  if (lower.includes("invalid login credentials")) {
+    return "Błędny e-mail albo hasło. Sprawdź dane i spróbuj ponownie.";
+  }
+  if (lower.includes("email not confirmed")) {
+    return "Konto wymaga potwierdzenia. Sprawdź skrzynkę e-mail i kliknij link od Supabase.";
+  }
+  if (lower.includes("otp_expired") || lower.includes("expired") || lower.includes("invalid")) {
+    return "Link potwierdzający wygasł albo został już użyty. Wyślij ponownie mail potwierdzający.";
+  }
+  if (lower.includes("user already registered") || lower.includes("already registered")) {
+    return "Konto już istnieje. Podaj poprawne hasło, żeby się zalogować.";
+  }
+  if (lower.includes("signup") && lower.includes("disabled")) {
+    return "Rejestracja jest wyłączona w Supabase. Włącz Allow new users to sign up.";
+  }
+  if (lower.includes("permission denied") && lower.includes("app_states")) {
+    return "Nie udało się zsynchronizować portfela. Sesja mogła wygasnąć, zaloguj się ponownie.";
+  }
+  return raw;
+}
+
+function validateAuthPassword(password) {
+  const value = String(password || "");
+  if (value.length < 6) {
+    throw new Error("Hasło jest za krótkie. Wpisz minimum 6 znaków.");
+  }
+}
+
+async function authenticateWithCloud(email, password) {
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    email,
+    enabled: true,
+    lastError: ""
+  });
+  assertCloudSyncReady({ requireSession: false });
+  validateAuthPassword(password);
+  let payload;
+  try {
+    payload = await supabaseRequest("/auth/v1/token?grant_type=password", {
+      method: "POST",
+      useAnonAuth: true,
+      body: { email: cloudSyncConfig.email, password }
+    });
+  } catch (loginError) {
+    payload = await supabaseRequest("/auth/v1/signup", {
+      method: "POST",
+      useAnonAuth: true,
+      body: { email: cloudSyncConfig.email, password }
+    });
+  }
+  const session = payload && (payload.session || payload);
+  const user = payload && (payload.user || (payload.session && payload.session.user));
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    accessToken: session && session.access_token,
+    refreshToken: session && session.refresh_token,
+    userId: user && user.id,
+    lastError: ""
+  });
+  if (!cloudSyncConfig.accessToken || !cloudSyncConfig.userId) {
+    throw new Error("Konto utworzone. Sprawdź e-mail i kliknij link potwierdzający, potem wróć do logowania.");
+  }
+  saveCloudSyncConfig();
+  renderCloudAuthForm();
+  await pullCloudState({ silent: true, createIfMissing: true });
+  closeCloudAuthOverlay();
+  renderAll();
+}
+
+async function onCloudSyncLogin() {
+  try {
+    const formValue = formToObject(dom.cloudSyncForm);
+    cloudSyncConfig = normalizeCloudSyncConfig({
+      ...cloudSyncConfig,
+      enabled: Boolean(formValue.enabled),
+      url: formValue.url,
+      anonKey: formValue.anonKey,
+      email: formValue.email,
+      lastError: ""
+    });
+    const password = String(formValue.password || "");
+    if (!cloudSyncConfig.email || !password) {
+      throw new Error("Podaj e-mail i hasło.");
+    }
+    await authenticateWithCloud(cloudSyncConfig.email, password);
+    showToast("Supabase połączony. Możesz wysłać lub pobrać dane.", "info");
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    updateCloudSyncInfo();
+    showToast(`Supabase: ${error.message}`, "error");
+  }
+}
+
+async function onCloudAuthSubmit() {
+  const formValue = formToObject(dom.cloudAuthForm);
+  const email = String(formValue.email || "").trim();
+  const password = String(formValue.password || "");
+  const submitButton = dom.cloudAuthForm ? dom.cloudAuthForm.querySelector('button[type="submit"]') : null;
+  const previousLabel = submitButton ? submitButton.textContent : "";
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    url: dom.cloudAuthUrlInput ? dom.cloudAuthUrlInput.value : cloudSyncConfig.url,
+    anonKey: dom.cloudAuthAnonKeyInput ? dom.cloudAuthAnonKeyInput.value : cloudSyncConfig.anonKey,
+    email,
+    enabled: true,
+    lastError: ""
+  });
+  saveCloudSyncConfig();
+  renderCloudAuthForm();
+  if (dom.cloudSyncForm) {
+    setFormField(dom.cloudSyncForm, "password", password);
+  }
+  try {
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.classList.add("is-loading");
+      submitButton.textContent = "Łączę...";
+    }
+    if (!email || !password) {
+      throw new Error("Podaj e-mail i hasło.");
+    }
+    if (dom.cloudAuthInfo) {
+      dom.cloudAuthInfo.textContent = "Łączę z Supabase...";
+    }
+    await authenticateWithCloud(email, password);
+    showToast("Zalogowano do chmury.", "info");
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    openCloudAuthOverlay(error.message);
+    showToast(error.message, "error");
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.classList.remove("is-loading");
+      submitButton.textContent = previousLabel || "Zaloguj / zarejestruj";
+    }
+  }
+}
+
+async function onCloudAuthResend() {
+  const emailInput = dom.cloudAuthForm ? dom.cloudAuthForm.elements.namedItem("email") : null;
+  const email = String((emailInput && emailInput.value) || cloudSyncConfig.email || "").trim();
+  const button = dom.cloudAuthResendBtn;
+  const previousLabel = button ? button.textContent : "";
+  try {
+    cloudSyncConfig = normalizeCloudSyncConfig({
+      ...cloudSyncConfig,
+      url: dom.cloudAuthUrlInput ? dom.cloudAuthUrlInput.value : cloudSyncConfig.url,
+      anonKey: dom.cloudAuthAnonKeyInput ? dom.cloudAuthAnonKeyInput.value : cloudSyncConfig.anonKey,
+      email,
+      lastError: ""
+    });
+    saveCloudSyncConfig();
+    if (!email) {
+      throw new Error("Wpisz e-mail, na który wysłać potwierdzenie.");
+    }
+    assertCloudSyncReady({ requireSession: false });
+    if (button) {
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.textContent = "Wysyłam...";
+    }
+    await supabaseRequest("/auth/v1/resend", {
+      method: "POST",
+      useAnonAuth: true,
+      body: {
+        type: "signup",
+        email
+      }
+    });
+    if (dom.cloudAuthInfo) {
+      dom.cloudAuthInfo.textContent = "Wysłano nowy mail potwierdzający. Sprawdź skrzynkę i spam.";
+    }
+    showToast("Wysłano nowy mail potwierdzający.", "info");
+  } catch (error) {
+    const message = normalizeSupabaseError({ message: error.message }, 400);
+    cloudSyncConfig.lastError = message;
+    saveCloudSyncConfig();
+    openCloudAuthOverlay(message);
+    showToast(message, "error");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+      button.textContent = previousLabel || "Wyślij ponownie mail potwierdzający";
+    }
+  }
+}
+
+function onCloudSyncLogout() {
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    enabled: false,
+    accessToken: "",
+    refreshToken: "",
+    userId: "",
+    lastError: ""
+  });
+  saveCloudSyncConfig();
+  if (CLOUD_ONLY_DATA) {
+    state = defaultState();
+    renderAll();
+    openCloudAuthOverlay("Wylogowano. Zaloguj się ponownie, żeby pobrać portfel z chmury.");
+  }
+  showToast("Wylogowano z Supabase na tym urządzeniu.", "info");
+}
+
+function scheduleCloudPush() {
+  if (!cloudSyncConfig.enabled || !cloudSyncConfig.accessToken || cloudSyncRuntime.suppressPush) {
+    return;
+  }
+  window.clearTimeout(cloudSyncRuntime.pushTimer);
+  cloudSyncRuntime.pushTimer = window.setTimeout(() => {
+    void pushCloudState({ reason: "auto" });
+  }, 1800);
+}
+
+async function pushCloudState({ force = false, reason = "manual" } = {}) {
+  if (cloudSyncRuntime.pushInFlight) {
+    return;
+  }
+  try {
+    assertCloudSyncReady({ requireSession: true });
+    if (!force && !cloudSyncConfig.enabled) {
+      return;
+    }
+    cloudSyncRuntime.pushInFlight = true;
+    updateCloudSyncInfo(reason === "auto" ? "Synchronizuję zmiany..." : "Wysyłam dane do Supabase...");
+    const now = nowIso();
+    await supabaseRequest("/rest/v1/app_states?on_conflict=user_id", {
+      method: "POST",
+      requireSession: true,
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: {
+        user_id: cloudSyncConfig.userId,
+        state,
+        updated_at: now
+      }
+    });
+    cloudSyncConfig.lastSyncAt = now;
+    cloudSyncConfig.lastError = "";
+    saveCloudSyncConfig();
+    if (reason !== "auto") {
+      showToast("Dane wysłane do Supabase.", "info");
+    }
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    if (force || reason !== "auto") {
+      showToast(`Supabase: ${error.message}`, "error");
+    }
+  } finally {
+    cloudSyncRuntime.pushInFlight = false;
+  }
+}
+
+async function pullCloudState({ silent = false, createIfMissing = false } = {}) {
+  if (cloudSyncRuntime.pullInFlight) {
+    return;
+  }
+  try {
+    assertCloudSyncReady({ requireSession: true });
+    cloudSyncRuntime.pullInFlight = true;
+    updateCloudSyncInfo("Pobieram dane z Supabase...");
+    const payload = await supabaseRequest(
+      `/rest/v1/app_states?user_id=eq.${encodeURIComponent(cloudSyncConfig.userId)}&select=state,updated_at&limit=1`,
+      { requireSession: true }
+    );
+    const row = Array.isArray(payload) ? payload[0] : null;
+    if (!row || !row.state) {
+      if (createIfMissing) {
+        await pushCloudState({ force: true, reason: "initial" });
+      } else if (!silent) {
+        showToast("W chmurze nie ma jeszcze danych. Po pierwszej zmianie aplikacja zsynchronizuje portfel.", "info");
+      }
+      return;
+    }
+    cloudSyncRuntime.suppressPush = true;
+    state = normalizeState(row.state);
+    if (!CLOUD_ONLY_DATA) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+    invalidateDashboardHistoryCache();
+    cloudSyncConfig.lastPullAt = nowIso();
+    cloudSyncConfig.lastError = "";
+    saveCloudSyncConfig();
+    renderAll();
+    if (!silent) {
+      showToast("Dane pobrane z Supabase.", "info");
+    }
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    showToast(`Supabase: ${error.message}`, "error");
+  } finally {
+    cloudSyncRuntime.suppressPush = false;
+    cloudSyncRuntime.pullInFlight = false;
+  }
+}
+
 function openMoreSheet() {
   closeFabMenu();
   closeRecordSheet();
@@ -530,7 +1059,7 @@ function openRecordSheet(details) {
   closeFabMenu();
   dom.recordSheetTitle.textContent = details.title || "Szczegóły rekordu";
   dom.recordSheetSubtitle.textContent = details.subtitle || "Podgląd danych";
-  dom.recordSheetBody.innerHTML = details.rows
+  const rowsHtml = details.rows
     .map(
       (row) =>
         `<article class="record-sheet-row"><span class="record-sheet-label">${escapeHtml(
@@ -538,6 +1067,17 @@ function openRecordSheet(details) {
         )}</span><strong class="record-sheet-value">${escapeHtml(row.value || "-")}</strong></article>`
     )
     .join("");
+  const actionsHtml = Array.isArray(details.actions) && details.actions.length
+    ? `<div class="record-sheet-actions">${details.actions
+        .map(
+          (action) =>
+            `<button type="button" class="btn ${escapeHtml(action.className || "secondary")}" data-action="${escapeHtml(
+              action.action || ""
+            )}" data-id="${escapeHtml(action.id || "")}">${escapeHtml(action.label || "Akcja")}</button>`
+        )
+        .join("")}</div>`
+    : "";
+  dom.recordSheetBody.innerHTML = `${rowsHtml}${actionsHtml}`;
   dom.recordSheet.hidden = false;
   if (dom.recordSheetBackdrop) {
     dom.recordSheetBackdrop.hidden = false;
@@ -577,6 +1117,69 @@ function onRecordRowClick(event) {
     subtitle: cells[0] ? `${cells[0].label}: ${cells[0].value}` : "Podgląd danych",
     rows: cells
   });
+}
+
+function openOperationSheet(operationId) {
+  const operation = findById(state.operations, operationId);
+  if (!operation) {
+    return;
+  }
+  const currency = operation.currency || state.meta.baseCurrency;
+  openRecordSheet({
+    title: operation.type || "Operacja",
+    subtitle: `${operation.date || "-"} · ${lookupAssetLabel(operation.assetId) || lookupName(state.accounts, operation.accountId)}`,
+    rows: [
+      { label: "Data", value: operation.date || "-" },
+      { label: "Typ", value: operation.type || "-" },
+      { label: "Portfel", value: lookupName(state.portfolios, operation.portfolioId) },
+      { label: "Konto", value: lookupName(state.accounts, operation.accountId) },
+      { label: "Walor", value: lookupAssetLabel(operation.assetId) },
+      { label: "Walor docelowy", value: lookupAssetLabel(operation.targetAssetId) },
+      { label: "Ilość", value: formatFloat(operation.quantity) },
+      { label: "Ilość docelowa", value: formatFloat(operation.targetQuantity) },
+      { label: "Cena", value: formatMoney(operation.price, currency) },
+      { label: "Kwota", value: formatMoney(operation.amount, currency) },
+      { label: "Prowizja", value: formatMoney(operation.fee, currency) },
+      { label: "Tagi", value: Array.isArray(operation.tags) && operation.tags.length ? operation.tags.join(", ") : "-" },
+      { label: "Notatka", value: operation.note || "-" }
+    ],
+    actions: [
+      { label: "Edytuj", action: "edit-operation", id: operation.id, className: "secondary" },
+      { label: "Usuń", action: "delete-operation", id: operation.id, className: "danger" }
+    ]
+  });
+}
+
+function openOperationDeleteConfirm(operationId) {
+  const operation = findById(state.operations, operationId);
+  if (!operation) {
+    return;
+  }
+  openRecordSheet({
+    title: "Usunąć operację?",
+    subtitle: "Ta akcja zmieni kokpit i raporty.",
+    rows: [
+      { label: "Operacja", value: operation.type || "-" },
+      { label: "Data", value: operation.date || "-" },
+      { label: "Walor", value: lookupAssetLabel(operation.assetId) },
+      { label: "Kwota", value: formatMoney(operation.amount, operation.currency || state.meta.baseCurrency) }
+    ],
+    actions: [
+      { label: "Anuluj", action: "close-record-sheet", id: "", className: "secondary" },
+      { label: "Tak, usuń", action: "confirm-delete-operation", id: operation.id, className: "danger" }
+    ]
+  });
+}
+
+function deleteOperationById(operationId) {
+  if (editingState.operationId === operationId) {
+    resetOperationForm();
+  }
+  state.operations = state.operations.filter((item) => item.id !== operationId);
+  saveState();
+  closeRecordSheet();
+  renderAll();
+  showToast("Operacja usunięta.", "info");
 }
 
 function onGlobalKeydown(event) {
@@ -831,6 +1434,12 @@ function cacheDom() {
   dom.appLoadingOverlay = document.getElementById("appLoadingOverlay");
   dom.toastStack = document.getElementById("toastStack");
   dom.onboardingOverlay = document.getElementById("onboardingOverlay");
+  dom.cloudAuthOverlay = document.getElementById("cloudAuthOverlay");
+  dom.cloudAuthForm = document.getElementById("cloudAuthForm");
+  dom.cloudAuthResendBtn = document.getElementById("cloudAuthResendBtn");
+  dom.cloudAuthUrlInput = document.getElementById("cloudAuthUrlInput");
+  dom.cloudAuthAnonKeyInput = document.getElementById("cloudAuthAnonKeyInput");
+  dom.cloudAuthInfo = document.getElementById("cloudAuthInfo");
   dom.onboardingKicker = document.getElementById("onboardingKicker");
   dom.onboardingIcon = document.getElementById("onboardingIcon");
   dom.onboardingTitle = document.getElementById("onboardingTitle");
@@ -862,6 +1471,14 @@ function cacheDom() {
   dom.statMonthlyChangeValue = document.getElementById("statMonthlyChangeValue");
   dom.statYearlyChangePct = document.getElementById("statYearlyChangePct");
   dom.statYearlyChangeValue = document.getElementById("statYearlyChangeValue");
+  dom.mobileHeroNetWorth = document.getElementById("mobileHeroNetWorth");
+  dom.mobileHeroTotalPl = document.getElementById("mobileHeroTotalPl");
+  dom.mobileHeroDailyPct = document.getElementById("mobileHeroDailyPct");
+  dom.mobileHeroDailyValue = document.getElementById("mobileHeroDailyValue");
+  dom.mobileHeroMonthlyPct = document.getElementById("mobileHeroMonthlyPct");
+  dom.mobileHeroMonthlyValue = document.getElementById("mobileHeroMonthlyValue");
+  dom.mobileHeroYearlyPct = document.getElementById("mobileHeroYearlyPct");
+  dom.mobileHeroYearlyValue = document.getElementById("mobileHeroYearlyValue");
   dom.dashboardChart = document.getElementById("dashboardChart");
   dom.dashboardChartRangeControls = document.getElementById("dashboardChartRangeControls");
   dom.dashboardChartModeControls = document.getElementById("dashboardChartModeControls");
@@ -1060,6 +1677,15 @@ function cacheDom() {
   dom.appearanceSummary = document.getElementById("appearanceSummary");
   dom.appearancePreview = document.getElementById("appearancePreview");
   dom.appearanceResetBtn = document.getElementById("appearanceResetBtn");
+  dom.cloudSyncForm = document.getElementById("cloudSyncForm");
+  dom.cloudSyncSaveConfigBtn = document.getElementById("cloudSyncSaveConfigBtn");
+  dom.cloudSyncLoginBtn = document.getElementById("cloudSyncLoginBtn");
+  dom.cloudSyncPushBtn = document.getElementById("cloudSyncPushBtn");
+  dom.cloudSyncPullBtn = document.getElementById("cloudSyncPullBtn");
+  dom.cloudSyncLogoutBtn = document.getElementById("cloudSyncLogoutBtn");
+  dom.cloudSyncInfo = document.getElementById("cloudSyncInfo");
+  dom.cloudAccountStatus = document.getElementById("cloudAccountStatus");
+  dom.cloudAccountMeta = document.getElementById("cloudAccountMeta");
 }
 
 function seedStaticSelects() {
@@ -1134,6 +1760,38 @@ function bindEvents() {
   }
   if (dom.appearanceResetBtn) {
     dom.appearanceResetBtn.addEventListener("click", onAppearanceReset);
+  }
+  if (dom.cloudSyncForm) {
+    dom.cloudSyncForm.addEventListener("submit", onCloudSyncConfigSubmit);
+  }
+  if (dom.cloudSyncLoginBtn) {
+    dom.cloudSyncLoginBtn.addEventListener("click", () => {
+      void onCloudSyncLogin();
+    });
+  }
+  if (dom.cloudSyncPushBtn) {
+    dom.cloudSyncPushBtn.addEventListener("click", () => {
+      void pushCloudState({ force: true, reason: "manual" });
+    });
+  }
+  if (dom.cloudSyncPullBtn) {
+    dom.cloudSyncPullBtn.addEventListener("click", () => {
+      void pullCloudState();
+    });
+  }
+  if (dom.cloudSyncLogoutBtn) {
+    dom.cloudSyncLogoutBtn.addEventListener("click", onCloudSyncLogout);
+  }
+  if (dom.cloudAuthForm) {
+    dom.cloudAuthForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void onCloudAuthSubmit();
+    });
+  }
+  if (dom.cloudAuthResendBtn) {
+    dom.cloudAuthResendBtn.addEventListener("click", () => {
+      void onCloudAuthResend();
+    });
   }
   dom.dashboardPortfolioSelect.addEventListener("change", renderDashboard);
   if (dom.dashboardInflationEnabled) {
@@ -1457,8 +2115,13 @@ function bindEvents() {
   dom.csvImportInput.addEventListener("change", onCsvImport);
   dom.exportBackupBtn.addEventListener("click", onBackupExport);
   dom.importBackupInput.addEventListener("change", onBackupImport);
-  dom.resetStateBtn.addEventListener("click", onResetState);
+  if (dom.resetStateBtn) {
+    dom.resetStateBtn.addEventListener("click", onResetState);
+  }
   dom.refreshQuotesBtn.addEventListener("click", onRefreshQuotes);
+  document.querySelectorAll("[data-mobile-refresh-quotes]").forEach((button) => {
+    button.addEventListener("click", onRefreshQuotes);
+  });
   dom.brokerCsvInput.addEventListener("change", onBrokerCsvImport);
   if (dom.onboardingSkipBtn) {
     dom.onboardingSkipBtn.addEventListener("click", completeOnboarding);
@@ -1476,7 +2139,7 @@ async function hydrateFromBackend() {
   try {
     await apiRequest("/health", { timeoutMs: 1400 });
     const payload = await apiRequest("/state", { timeoutMs: 5000 });
-    if (payload && payload.state) {
+    if (!CLOUD_ONLY_DATA && payload && payload.state) {
       state = normalizeState(payload.state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
@@ -1678,7 +2341,7 @@ async function refreshQuotesAndFxSilently() {
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
     applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    saveState({ preserveHistoryCache: true });
     renderAll();
   } catch (error) {
     // Silent fallback. The manual refresh button still remains available.
@@ -4882,23 +5545,6 @@ function buildAppearancePreviewMarkup(theme, iconSet, fontScale) {
             <span class="appearance-mini-btn secondary">${escapeHtml(icons.reports)} Eksport PNG</span>
           </div>
         </div>
-        <div class="appearance-preview-card">
-          <h4>Status i oznaczenia</h4>
-          <div class="appearance-preview-list">
-            <div class="appearance-mini-row">
-              <span>Notowania</span>
-              <strong><span class="badge ok">online</span></strong>
-            </div>
-            <div class="appearance-mini-row">
-              <span>Alerty</span>
-              <strong><span class="badge off">2 oczekujące</span></strong>
-            </div>
-            <div class="appearance-mini-row">
-              <span>Portfel</span>
-              <strong>${escapeHtml(icons.portfolios)} Główny</strong>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   `;
@@ -5933,6 +6579,18 @@ function onActionClick(event) {
     return;
   }
 
+  if (action === "close-record-sheet") {
+    closeRecordSheet();
+    return;
+  }
+  if (action === "view-operation") {
+    openOperationSheet(id);
+    return;
+  }
+  if (action === "confirm-delete-operation") {
+    deleteOperationById(id);
+    return;
+  }
   if (action === "delete-portfolio") {
     removePortfolio(id);
     return;
@@ -6041,19 +6699,11 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-operation") {
-    const yes = window.confirm("Usunąć tę operację?");
-    if (!yes) {
-      return;
-    }
-    if (editingState.operationId === id) {
-      resetOperationForm();
-    }
-    state.operations = state.operations.filter((item) => item.id !== id);
-    saveState();
-    renderAll();
+    openOperationDeleteConfirm(id);
     return;
   }
   if (action === "edit-operation") {
+    closeRecordSheet();
     startOperationEdit(id);
     return;
   }
@@ -9385,6 +10035,9 @@ function defaultState() {
 }
 
 function loadState() {
+  if (CLOUD_ONLY_DATA) {
+    return defaultState();
+  }
   const storageCandidates = [STORAGE_KEY].concat(LEGACY_STORAGE_KEYS);
   for (const key of storageCandidates) {
     const raw = localStorage.getItem(key);
@@ -9567,9 +10220,14 @@ function saveState(options = {}) {
   if (!options.preserveHistoryCache) {
     invalidateDashboardHistoryCache();
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (!CLOUD_ONLY_DATA) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
   if (!options.skipBackend) {
     scheduleBackendPush();
+  }
+  if (!options.skipCloud) {
+    scheduleCloudPush();
   }
 }
 

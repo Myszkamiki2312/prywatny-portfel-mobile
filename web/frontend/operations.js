@@ -77,8 +77,7 @@ export function renderOperations(deps) {
     lookupAssetLabel,
     escapeHtml,
     formatFloat,
-    formatMoney,
-    renderTable
+    formatMoney
   } = deps;
 
   const filters = {
@@ -98,28 +97,9 @@ export function renderOperations(deps) {
     lookupAssetLabel
   });
 
-  const rows = filteredOperations
+  const sortedOperations = filteredOperations
     .slice()
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-    .map((operation) => [
-      escapeHtml(operation.date),
-      escapeHtml(operation.type),
-      escapeHtml(lookupName(state.portfolios, operation.portfolioId)),
-      escapeHtml(lookupName(state.accounts, operation.accountId)),
-      escapeHtml(lookupAssetLabel(operation.assetId)),
-      escapeHtml(lookupAssetLabel(operation.targetAssetId)),
-      formatFloat(operation.quantity),
-      formatFloat(operation.targetQuantity),
-      formatFloat(operation.price),
-      formatMoney(operation.amount, operation.currency || state.meta.baseCurrency),
-      formatMoney(operation.fee, operation.currency || state.meta.baseCurrency),
-      escapeHtml(operation.tags.join(", ") || "-"),
-      escapeHtml(operation.note || "-"),
-      [
-        `<button class="btn secondary" data-action="edit-operation" data-id="${operation.id}">Edytuj</button>`,
-        `<button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>`
-      ].join(" ")
-    ]);
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   if (dom.operationHistoryInfo) {
     const activeFilters = [
@@ -137,26 +117,89 @@ export function renderOperations(deps) {
       : `Łącznie operacji: ${state.operations.length}`;
   }
 
-  renderTable(
-    dom.operationList,
-    [
-      "Data",
-      "Typ",
-      "Portfel",
-      "Konto",
-      "Walor",
-      "Walor docelowy",
-      "Ilość",
-      "Ilość doc.",
-      "Cena",
-      "Kwota",
-      "Prowizja",
-      "Tagi",
-      "Notatka",
-      "Akcje"
-    ],
-    rows
-  );
+  if (!dom.operationList) {
+    return;
+  }
+
+  if (!sortedOperations.length) {
+    dom.operationList.innerHTML = `
+      <div class="operation-empty-state">
+        <span class="operation-empty-icon">+</span>
+        <strong>Nie ma jeszcze operacji w tym widoku</strong>
+        <p>Dodaj wpłatę gotówki, kupno albo sprzedaż. Jeśli używasz filtrów, możesz je wyczyścić.</p>
+        <div class="operation-empty-actions">
+          <button type="button" class="btn" data-quick-operation="cash">Wpłata gotówki</button>
+          <button type="button" class="btn secondary" data-quick-operation="buy">Kupno waloru</button>
+        </div>
+      </div>
+    `;
+    dom.operationList.querySelectorAll("[data-quick-operation]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        document
+          .querySelectorAll(`[data-quick-operation="${event.currentTarget.dataset.quickOperation}"]`)[0]
+          ?.click();
+      });
+    });
+    return;
+  }
+
+  dom.operationList.innerHTML = `
+    <div class="operation-card-list">
+      ${sortedOperations.map((operation) => renderOperationCard(operation)).join("")}
+    </div>
+  `;
+
+  function renderOperationCard(operation) {
+    const currency = operation.currency || state.meta.baseCurrency;
+    const assetLabel = lookupAssetLabel(operation.assetId);
+    const targetAssetLabel = lookupAssetLabel(operation.targetAssetId);
+    const quantity = formatFloat(operation.quantity);
+    const targetQuantity = formatFloat(operation.targetQuantity);
+    const price = formatMoney(operation.price, currency);
+    const amount = formatMoney(operation.amount, currency);
+    const fee = formatMoney(operation.fee, currency);
+    const title = assetLabel && assetLabel !== "-" ? assetLabel : lookupName(state.accounts, operation.accountId);
+    const tags = Array.isArray(operation.tags) && operation.tags.length ? operation.tags.join(", ") : "";
+    return `
+      <article class="operation-card" data-action="view-operation" data-id="${escapeHtml(operation.id)}" tabindex="0">
+        <div class="operation-card-main">
+          <span class="operation-type-pill">${escapeHtml(operation.type || "Operacja")}</span>
+          <strong>${escapeHtml(title || "Operacja")}</strong>
+          <small>${escapeHtml(operation.date || "-")} · ${escapeHtml(lookupName(state.portfolios, operation.portfolioId))}</small>
+        </div>
+        <div class="operation-card-amount">
+          <strong>${amount}</strong>
+          <small>${escapeHtml(currency)}</small>
+        </div>
+        <div class="operation-card-grid">
+          <span><small>Konto</small><strong>${escapeHtml(lookupName(state.accounts, operation.accountId))}</strong></span>
+          <span><small>Ilość</small><strong>${quantity}</strong></span>
+          <span><small>Cena</small><strong>${price}</strong></span>
+          <span><small>Prowizja</small><strong>${fee}</strong></span>
+          ${
+            targetAssetLabel && targetAssetLabel !== "-"
+              ? `<span><small>Walor doc.</small><strong>${escapeHtml(targetAssetLabel)}</strong></span>`
+              : ""
+          }
+          ${
+            Number(operation.targetQuantity || 0)
+              ? `<span><small>Ilość doc.</small><strong>${targetQuantity}</strong></span>`
+              : ""
+          }
+        </div>
+        ${
+          tags || operation.note
+            ? `<p class="operation-card-note">${escapeHtml([tags, operation.note].filter(Boolean).join(" · "))}</p>`
+            : ""
+        }
+        <div class="operation-card-actions">
+          <button class="btn secondary" type="button" data-action="view-operation" data-id="${escapeHtml(operation.id)}">Szczegóły</button>
+          <button class="btn secondary" type="button" data-action="edit-operation" data-id="${escapeHtml(operation.id)}">Edytuj</button>
+          <button class="btn danger" type="button" data-action="delete-operation" data-id="${escapeHtml(operation.id)}">Usuń</button>
+        </div>
+      </article>
+    `;
+  }
 }
 
 export function renderRecurring(deps) {

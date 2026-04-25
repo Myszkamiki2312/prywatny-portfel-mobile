@@ -49,10 +49,20 @@ export function renderDashboard(deps) {
   dom.statNetWorth.textContent = formatMoney(metrics.netWorth);
   dom.statTotalPl.textContent = formatMoney(metrics.totalPL);
   dom.statTotalPl.style.color = metrics.totalPL >= 0 ? "var(--brand-strong)" : "var(--danger)";
+  if (dom.mobileHeroNetWorth) {
+    dom.mobileHeroNetWorth.textContent = formatMoney(metrics.netWorth);
+  }
+  if (dom.mobileHeroTotalPl) {
+    dom.mobileHeroTotalPl.textContent = `${metrics.totalPL >= 0 ? "+" : ""}${formatMoney(metrics.totalPL)} całkowicie`;
+    dom.mobileHeroTotalPl.style.color = metrics.totalPL >= 0 ? "var(--brand)" : "var(--danger)";
+  }
 
   applyTrendCard(dom.statDailyChangePct, dom.statDailyChangeValue, summary.daily, formatPercent, formatMoney);
   applyTrendCard(dom.statMonthlyChangePct, dom.statMonthlyChangeValue, summary.monthly, formatPercent, formatMoney);
   applyTrendCard(dom.statYearlyChangePct, dom.statYearlyChangeValue, summary.yearly, formatPercent, formatMoney);
+  applyTrendCard(dom.mobileHeroDailyPct, dom.mobileHeroDailyValue, summary.daily, formatPercent, formatMoney);
+  applyTrendCard(dom.mobileHeroMonthlyPct, dom.mobileHeroMonthlyValue, summary.monthly, formatPercent, formatMoney);
+  applyTrendCard(dom.mobileHeroYearlyPct, dom.mobileHeroYearlyValue, summary.yearly, formatPercent, formatMoney);
 
   const chartView = getVisibleLineChartModel(
     "dashboard",

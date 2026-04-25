@@ -27,6 +27,41 @@
         </div>
       </div>
     </div>
+    <div id="cloudAuthOverlay" class="cloud-auth-overlay" hidden>
+      <section class="cloud-auth-card">
+        <span class="app-loading-badge">Prywatna chmura</span>
+        <h2>Zaloguj się do portfela</h2>
+        <p class="muted">
+          Dane portfela są trzymane w Supabase. Na tym urządzeniu zostaje tylko sesja logowania.
+        </p>
+        <form id="cloudAuthForm" class="cloud-auth-form">
+          <label class="control">
+            <span>E-mail</span>
+            <input name="email" type="email" autocomplete="email" required />
+          </label>
+          <label class="control">
+            <span>Hasło</span>
+            <input name="password" type="password" autocomplete="current-password" minlength="6" required />
+            <small>Minimum 6 znaków. Najlepiej użyj też cyfry albo znaku specjalnego.</small>
+          </label>
+          <button id="cloudAuthLoginBtn" type="submit" class="btn">Zaloguj / zarejestruj</button>
+        </form>
+        <button id="cloudAuthResendBtn" type="button" class="btn secondary">Wyślij ponownie mail potwierdzający</button>
+        <details class="cloud-dev-settings">
+          <summary>Ustawienia developera</summary>
+          <p class="muted">W publicznej wersji APK te dane powinny być wpisane w `web/supabase-config.js`.</p>
+          <label class="control">
+            <span>Supabase URL</span>
+            <input id="cloudAuthUrlInput" type="url" placeholder="https://xxxx.supabase.co" />
+          </label>
+          <label class="control">
+            <span>Anon public key</span>
+            <input id="cloudAuthAnonKeyInput" type="password" autocomplete="off" placeholder="eyJ..." />
+          </label>
+        </details>
+        <p id="cloudAuthInfo" class="hint">Jeśli konto nie istnieje, aplikacja spróbuje je utworzyć.</p>
+      </section>
+    </div>
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">P</span>
@@ -101,6 +136,33 @@
               </label>
             </div>
           </div>
+          <section class="mobile-dashboard-hero" aria-label="Podsumowanie portfela">
+            <div class="mobile-dashboard-hero-top">
+              <div>
+                <p class="eyebrow">Wartość portfela</p>
+                <strong id="mobileHeroNetWorth">0,00 PLN</strong>
+                <span id="mobileHeroTotalPl">0,00 PLN</span>
+              </div>
+              <button type="button" class="btn secondary mobile-hero-refresh" data-mobile-refresh-quotes>↻</button>
+            </div>
+            <div class="mobile-dashboard-mini-grid">
+              <article>
+                <span>Dzisiaj</span>
+                <strong id="mobileHeroDailyPct">—</strong>
+                <small id="mobileHeroDailyValue">Brak danych</small>
+              </article>
+              <article>
+                <span>Miesiąc</span>
+                <strong id="mobileHeroMonthlyPct">—</strong>
+                <small id="mobileHeroMonthlyValue">Brak danych</small>
+              </article>
+              <article>
+                <span>Rok</span>
+                <strong id="mobileHeroYearlyPct">—</strong>
+                <small id="mobileHeroYearlyValue">Brak danych</small>
+              </article>
+            </div>
+          </section>
           <div class="stats-grid">
             <article class="stat-card">
               <p>Wartość rynkowa</p>
@@ -1330,6 +1392,49 @@
             <div id="appearanceFontGrid" class="appearance-grid compact"></div>
             <p id="appearanceSummary" class="hint"></p>
           </article>
+          <article class="panel cloud-sync-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Chmura</p>
+                <h2>Konto i synchronizacja</h2>
+                <p class="muted">
+                  Dane portfela są bezpiecznie przypisane do Twojego konta.
+                </p>
+              </div>
+            </div>
+            <div class="cloud-account-card">
+              <span>Status</span>
+              <strong id="cloudAccountStatus">Nie zalogowano</strong>
+              <small id="cloudAccountMeta">Zaloguj się, żeby używać portfela.</small>
+            </div>
+            <form id="cloudSyncForm" class="form-grid cloud-dev-form">
+              <label class="control full cloud-dev-field">
+                <span>Supabase URL</span>
+                <input name="url" type="url" placeholder="https://xxxx.supabase.co" />
+              </label>
+              <label class="control full cloud-dev-field">
+                <span>Anon public key</span>
+                <input name="anonKey" type="password" autocomplete="off" placeholder="eyJ..." />
+              </label>
+              <label class="control cloud-dev-field">
+                <span>E-mail</span>
+                <input name="email" type="email" autocomplete="email" />
+              </label>
+              <label class="control cloud-dev-field">
+                <span>Hasło</span>
+                <input name="password" type="password" autocomplete="current-password" />
+              </label>
+              <input name="enabled" type="hidden" value="on" />
+              <div class="actions-inline full cloud-sync-actions">
+                <button id="cloudSyncSaveConfigBtn" type="submit" class="btn secondary">Zapisz konfigurację</button>
+                <button id="cloudSyncLoginBtn" type="button" class="btn">Połącz konto</button>
+                <button id="cloudSyncPushBtn" type="button" class="btn secondary">Synchronizuj teraz</button>
+                <button id="cloudSyncPullBtn" type="button" class="btn secondary">Odśwież z chmury</button>
+                <button id="cloudSyncLogoutBtn" type="button" class="btn danger cloud-logout-btn">Wyloguj</button>
+              </div>
+            </form>
+            <p id="cloudSyncInfo" class="hint">Chmura nie jest jeszcze skonfigurowana.</p>
+          </article>
           <article class="panel">
             <h2>Podgląd na żywo</h2>
             <p class="muted">
@@ -1423,13 +1528,6 @@
       <div id="recordSheetBody" class="record-sheet-body"></div>
     </aside>
 
-    <footer class="footer">
-      <p>
-        Dane trzymane lokalnie w przeglądarce. Wykonuj regularny eksport kopii.
-      </p>
-      <button id="resetStateBtn" class="btn danger">Wyczyść wszystkie dane</button>
-    </footer>
-
     <template id="tableTemplate">
       <table>
         <thead></thead>
@@ -1460,6 +1558,7 @@
       </div>
     </div>
 
+    <script src="supabase-config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
