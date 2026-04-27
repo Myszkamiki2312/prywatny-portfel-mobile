@@ -632,6 +632,22 @@ textarea:focus {
   color: var(--danger);
 }
 
+.btn.link {
+  min-height: auto;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.btn.link:hover {
+  transform: none;
+  filter: none;
+  color: var(--brand-strong);
+}
+
 .file-btn {
   position: relative;
   overflow: hidden;

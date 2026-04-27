@@ -730,6 +730,17 @@ function validateAuthPassword(password) {
   }
 }
 
+function passwordResetRedirectUrl() {
+  const explicit = String(SUPABASE_APP_CONFIG.resetRedirectUrl || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (typeof window !== "undefined" && /^https?:$/.test(window.location.protocol)) {
+    return new URL("reset-password.html", window.location.href).toString();
+  }
+  return "https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html";
+}
+
 async function authenticateWithCloud(email, password) {
   cloudSyncConfig = normalizeCloudSyncConfig({
     ...cloudSyncConfig,
@@ -890,6 +901,55 @@ async function onCloudAuthResend() {
       button.disabled = false;
       button.classList.remove("is-loading");
       button.textContent = previousLabel || "Wyślij ponownie mail potwierdzający";
+    }
+  }
+}
+
+async function onCloudPasswordReset() {
+  const emailInput = dom.cloudAuthForm ? dom.cloudAuthForm.elements.namedItem("email") : null;
+  const email = String((emailInput && emailInput.value) || cloudSyncConfig.email || "").trim();
+  const button = dom.cloudAuthResetPasswordBtn;
+  const previousLabel = button ? button.textContent : "";
+  try {
+    cloudSyncConfig = normalizeCloudSyncConfig({
+      ...cloudSyncConfig,
+      url: dom.cloudAuthUrlInput ? dom.cloudAuthUrlInput.value : cloudSyncConfig.url,
+      anonKey: dom.cloudAuthAnonKeyInput ? dom.cloudAuthAnonKeyInput.value : cloudSyncConfig.anonKey,
+      email,
+      lastError: ""
+    });
+    saveCloudSyncConfig();
+    if (!email) {
+      throw new Error("Wpisz e-mail konta, dla którego chcesz zresetować hasło.");
+    }
+    assertCloudSyncReady({ requireSession: false });
+    if (button) {
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.textContent = "Wysyłam reset...";
+    }
+    const redirectTo = passwordResetRedirectUrl();
+    await supabaseRequest(`/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`, {
+      method: "POST",
+      useAnonAuth: true,
+      body: { email }
+    });
+    const message = `Wysłano link resetowania hasła. Otwórz najnowszy mail i ustaw nowe hasło na stronie: ${redirectTo}`;
+    if (dom.cloudAuthInfo) {
+      dom.cloudAuthInfo.textContent = message;
+    }
+    showToast("Wysłano link resetowania hasła.", "info");
+  } catch (error) {
+    const message = normalizeSupabaseError({ message: error.message }, 400);
+    cloudSyncConfig.lastError = message;
+    saveCloudSyncConfig();
+    openCloudAuthOverlay(message);
+    showToast(message, "error");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+      button.textContent = previousLabel || "Nie pamiętasz hasła?";
     }
   }
 }
@@ -1437,6 +1497,7 @@ function cacheDom() {
   dom.cloudAuthOverlay = document.getElementById("cloudAuthOverlay");
   dom.cloudAuthForm = document.getElementById("cloudAuthForm");
   dom.cloudAuthResendBtn = document.getElementById("cloudAuthResendBtn");
+  dom.cloudAuthResetPasswordBtn = document.getElementById("cloudAuthResetPasswordBtn");
   dom.cloudAuthUrlInput = document.getElementById("cloudAuthUrlInput");
   dom.cloudAuthAnonKeyInput = document.getElementById("cloudAuthAnonKeyInput");
   dom.cloudAuthInfo = document.getElementById("cloudAuthInfo");
@@ -1791,6 +1852,11 @@ function bindEvents() {
   if (dom.cloudAuthResendBtn) {
     dom.cloudAuthResendBtn.addEventListener("click", () => {
       void onCloudAuthResend();
+    });
+  }
+  if (dom.cloudAuthResetPasswordBtn) {
+    dom.cloudAuthResetPasswordBtn.addEventListener("click", () => {
+      void onCloudPasswordReset();
     });
   }
   dom.dashboardPortfolioSelect.addEventListener("change", renderDashboard);

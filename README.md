@@ -35,6 +35,15 @@ Desktopowa aplikacja pozostaje bez zmian.
 3. W `Authentication -> Providers -> Email` włącz logowanie e-mail/hasło.
 4. Jeśli chcesz, żeby po rejestracji przychodził e-mail potwierdzający, zostaw włączone potwierdzanie e-mail.
 5. Skopiuj `Project URL` i `anon public key` do `web/supabase-config.js` przed wydaniem APK.
+6. W `Authentication -> URL Configuration` dodaj Redirect URL:
+   - `https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html`
+
+## Reset hasła
+
+- Na ekranie logowania kliknij `Nie pamiętasz hasła?`.
+- Aplikacja wyśle mail Supabase z linkiem do `reset-password.html`.
+- Po zmianie hasła wróć do APK i zaloguj się nowym hasłem.
+- Jeśli Gmail pokazuje błąd `otp_expired`, wyślij reset jeszcze raz i użyj najnowszego maila.
 
 ## Release APK
 
