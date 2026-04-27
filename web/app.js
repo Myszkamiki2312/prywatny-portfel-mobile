@@ -741,6 +741,17 @@ function passwordResetRedirectUrl() {
   return "https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html";
 }
 
+function emailConfirmRedirectUrl() {
+  const explicit = String(SUPABASE_APP_CONFIG.confirmRedirectUrl || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (typeof window !== "undefined" && /^https?:$/.test(window.location.protocol)) {
+    return new URL("confirm-email.html", window.location.href).toString();
+  }
+  return "https://myszkamiki2312.github.io/prywatny-portfel/confirm-email.html";
+}
+
 async function authenticateWithCloud(email, password) {
   cloudSyncConfig = normalizeCloudSyncConfig({
     ...cloudSyncConfig,
@@ -751,6 +762,7 @@ async function authenticateWithCloud(email, password) {
   assertCloudSyncReady({ requireSession: false });
   validateAuthPassword(password);
   let payload;
+  let loginErrorMessage = "";
   try {
     payload = await supabaseRequest("/auth/v1/token?grant_type=password", {
       method: "POST",
@@ -758,11 +770,24 @@ async function authenticateWithCloud(email, password) {
       body: { email: cloudSyncConfig.email, password }
     });
   } catch (loginError) {
-    payload = await supabaseRequest("/auth/v1/signup", {
-      method: "POST",
-      useAnonAuth: true,
-      body: { email: cloudSyncConfig.email, password }
-    });
+    loginErrorMessage = loginError && loginError.message ? String(loginError.message) : "";
+    if (!/błędny e-mail albo hasło|invalid login credentials/i.test(loginErrorMessage)) {
+      throw loginError;
+    }
+    try {
+      const redirectTo = emailConfirmRedirectUrl();
+      payload = await supabaseRequest(`/auth/v1/signup?redirect_to=${encodeURIComponent(redirectTo)}`, {
+        method: "POST",
+        useAnonAuth: true,
+        body: { email: cloudSyncConfig.email, password }
+      });
+    } catch (signupError) {
+      const signupMessage = signupError && signupError.message ? String(signupError.message) : "";
+      if (/konto już istnieje|user already registered|already registered|already exists/i.test(signupMessage)) {
+        throw new Error("Błędny e-mail albo hasło. Sprawdź dane i spróbuj ponownie.");
+      }
+      throw new Error(signupMessage || loginErrorMessage || "Nie udało się zalogować ani utworzyć konta.");
+    }
   }
   const session = payload && (payload.session || payload);
   const user = payload && (payload.user || (payload.session && payload.session.user));
@@ -878,7 +903,8 @@ async function onCloudAuthResend() {
       button.classList.add("is-loading");
       button.textContent = "Wysyłam...";
     }
-    await supabaseRequest("/auth/v1/resend", {
+    const redirectTo = emailConfirmRedirectUrl();
+    await supabaseRequest(`/auth/v1/resend?redirect_to=${encodeURIComponent(redirectTo)}`, {
       method: "POST",
       useAnonAuth: true,
       body: {
@@ -886,8 +912,9 @@ async function onCloudAuthResend() {
         email
       }
     });
+    const message = `Wysłano nowy mail potwierdzający. Otwórz najnowszy link aktywacyjny: ${redirectTo}`;
     if (dom.cloudAuthInfo) {
-      dom.cloudAuthInfo.textContent = "Wysłano nowy mail potwierdzający. Sprawdź skrzynkę i spam.";
+      dom.cloudAuthInfo.textContent = message;
     }
     showToast("Wysłano nowy mail potwierdzający.", "info");
   } catch (error) {

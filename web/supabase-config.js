@@ -3,5 +3,6 @@
 window.PRIVATE_PORTFOLIO_SUPABASE = {
   url: "https://kcvrgbzluyjvuynqoezd.supabase.co",
   anonKey: "sb_publishable_g9Ki1EBtOPDFyErEVcqajA_29nJZANV",
-  resetRedirectUrl: "https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html"
+  resetRedirectUrl: "https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html",
+  confirmRedirectUrl: "https://myszkamiki2312.github.io/prywatny-portfel/confirm-email.html"
 };

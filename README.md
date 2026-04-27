@@ -33,10 +33,18 @@ Desktopowa aplikacja pozostaje bez zmian.
 1. Utwórz projekt w Supabase.
 2. W SQL Editor uruchom `docs/supabase-schema.sql`.
 3. W `Authentication -> Providers -> Email` włącz logowanie e-mail/hasło.
-4. Jeśli chcesz, żeby po rejestracji przychodził e-mail potwierdzający, zostaw włączone potwierdzanie e-mail.
+4. Włącz `Confirm email`, jeśli nowe konta mają wymagać aktywacji z maila.
 5. Skopiuj `Project URL` i `anon public key` do `web/supabase-config.js` przed wydaniem APK.
 6. W `Authentication -> URL Configuration` dodaj Redirect URL:
+   - `https://myszkamiki2312.github.io/prywatny-portfel/confirm-email.html`
    - `https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html`
+
+## Aktywacja konta
+
+- Stare, już działające konta logują się normalnie.
+- Nowe konto po rejestracji dostaje mail Supabase z linkiem do `confirm-email.html`.
+- Po aktywacji użytkownik wraca do APK i loguje się swoim hasłem.
+- Jeśli link wygasł, kliknij w aplikacji `Wyślij ponownie mail potwierdzający` i użyj najnowszego maila.
 
 ## Reset hasła
 
