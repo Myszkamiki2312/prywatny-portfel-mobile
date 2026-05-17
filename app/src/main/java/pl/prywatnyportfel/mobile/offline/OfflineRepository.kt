@@ -10,10 +10,10 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.text.Normalizer
-import kotlin.math.roundToInt
 
 data class ApiDispatchResult(
     val status: Int,
@@ -632,17 +632,30 @@ class OfflineRepository(private val context: Context) {
         val normalized = normalizeKey(reportName)
         if (normalized.contains("historiaoperacji")) {
             val operations = state.optJSONArray("operations") ?: JSONArray()
+            val assets = state.optJSONArray("assets") ?: JSONArray()
+            val assetMap = HashMap<String, String>()
+            for (a in 0 until assets.length()) {
+                val asset = assets.optJSONObject(a) ?: continue
+                val id = asset.optString("id", "")
+                val ticker = asset.optString("ticker", "")
+                val name = asset.optString("name", "")
+                if (id.isNotBlank()) {
+                    assetMap[id] = if (ticker.isNotBlank() && name.isNotBlank()) "$ticker - $name" else ticker.ifBlank { name }
+                }
+            }
             val rows = JSONArray()
             for (i in 0 until operations.length()) {
                 val op = operations.optJSONObject(i) ?: continue
                 if (portfolioId.isNotBlank() && op.optString("portfolioId", "") != portfolioId) {
                     continue
                 }
+                val assetId = op.optString("assetId", "")
+                val assetLabel = assetMap[assetId] ?: assetId
                 rows.put(
                     JSONArray()
                         .put(op.optString("date", ""))
                         .put(op.optString("type", ""))
-                        .put(op.optString("assetId", ""))
+                        .put(assetLabel)
                         .put(round2(num(op.opt("quantity"))))
                         .put(round2(num(op.opt("price"))))
                         .put(round2(num(op.opt("amount"))))
@@ -652,7 +665,7 @@ class OfflineRepository(private val context: Context) {
             return JSONObject()
                 .put("reportName", reportName)
                 .put("info", "$reportName | Offline Android")
-                .put("headers", JSONArray().put("Data").put("Typ").put("Asset ID").put("Ilość").put("Cena").put("Kwota").put("Prowizja"))
+                .put("headers", JSONArray().put("Data").put("Typ").put("Walor").put("Ilość").put("Cena").put("Kwota").put("Prowizja"))
                 .put("rows", rows)
                 .put("chart", JSONObject().put("labels", JSONArray()).put("values", JSONArray()).put("color", "#0e7a64"))
         }
@@ -802,7 +815,7 @@ class OfflineRepository(private val context: Context) {
         val liabilities = state.optJSONArray("liabilities") ?: JSONArray()
         val recurring = state.optJSONArray("recurringOps") ?: JSONArray()
         val alerts = state.optJSONArray("alerts") ?: JSONArray()
-        val today = LocalDate.now(ZoneOffset.UTC)
+        val today = LocalDate.now(ZoneId.systemDefault())
         val maxDate = today.plusDays(days.toLong())
         val rows = mutableListOf<JSONObject>()
 
@@ -987,7 +1000,7 @@ class OfflineRepository(private val context: Context) {
     private suspend fun catalystRows(): JSONArray {
         val state = loadStateObject()
         val assets = state.optJSONArray("assets") ?: JSONArray()
-        val nowDate = LocalDate.now(ZoneOffset.UTC)
+        val nowDate = LocalDate.now(ZoneId.systemDefault())
         val rows = JSONArray()
         for (i in 0 until assets.length()) {
             val asset = assets.optJSONObject(i) ?: continue
@@ -1094,7 +1107,8 @@ class OfflineRepository(private val context: Context) {
     private suspend fun importBrokerCsv(broker: String, payload: JSONObject): JSONObject {
         val csv = payload.optString("csv", "")
         val fileName = payload.optString("fileName", "")
-        val rows = parseCsvRows(csv)
+        val allRows = parseCsvRows(csv)
+        val rows = if (allRows.size > IMPORT_MAX_ROWS) allRows.take(IMPORT_MAX_ROWS) else allRows
         val state = loadStateObject()
         val options = payload.optJSONObject("options") ?: JSONObject()
         val portfolios = state.optJSONArray("portfolios") ?: JSONArray()
@@ -2089,7 +2103,7 @@ class OfflineRepository(private val context: Context) {
 
     private fun nowIso(): String = Instant.now().toString()
 
-    private fun todayIso(): String = OffsetDateTime.now(ZoneOffset.UTC).toLocalDate().toString()
+    private fun todayIso(): String = LocalDate.now(ZoneId.systemDefault()).toString()
 
     private fun timestampCompact(): String =
         OffsetDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
@@ -2097,14 +2111,15 @@ class OfflineRepository(private val context: Context) {
     private fun ageSeconds(iso: String): Int {
         return try {
             val parsed = Instant.parse(iso)
-            (Instant.now().epochSecond - parsed.epochSecond).coerceAtLeast(0).toInt()
+            (Instant.now().epochSecond - parsed.epochSecond).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
         } catch (_: Exception) {
             0
         }
     }
 
-    private fun round2(value: Double): Double = ((value * 100.0).roundToInt()) / 100.0
-    private fun round6(value: Double): Double = ((value * 1_000_000.0).roundToInt()) / 1_000_000.0
+    // roundToInt() saturates at Int.MAX_VALUE (~2 147) — use Math.round (Long) for safety
+    private fun round2(value: Double): Double = Math.round(value * 100.0) / 100.0
+    private fun round6(value: Double): Double = Math.round(value * 1_000_000.0) / 1_000_000.0
 
     private fun ok(body: JSONObject): ApiDispatchResult = ApiDispatchResult(status = 200, body = body.toString())
 
@@ -2112,6 +2127,7 @@ class OfflineRepository(private val context: Context) {
         ApiDispatchResult(status = 404, body = JSONObject().put("error", message).toString())
 
     companion object {
+        private const val IMPORT_MAX_ROWS = 5000
         private const val KEY_REALTIME_CONFIG = "realtime_config"
         private const val KEY_NOTIFICATION_CONFIG = "notification_config"
         private const val KEY_NOTIFICATION_HISTORY = "notification_history"

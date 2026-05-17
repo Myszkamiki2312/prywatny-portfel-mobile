@@ -1619,6 +1619,7 @@ function cacheDom() {
   dom.operationHistoryInfo = document.getElementById("operationHistoryInfo");
   dom.quickOperationInfo = document.getElementById("quickOperationInfo");
   dom.csvImportInput = document.getElementById("csvImportInput");
+  dom.csvExportBtn = document.getElementById("csvExportBtn");
   dom.brokerSelect = document.getElementById("brokerSelect");
   dom.brokerCsvInput = document.getElementById("brokerCsvInput");
   dom.brokerImportInfo = document.getElementById("brokerImportInfo");
@@ -2206,6 +2207,7 @@ function bindEvents() {
   });
 
   dom.csvImportInput.addEventListener("change", onCsvImport);
+  dom.csvExportBtn.addEventListener("click", onCsvExport);
   dom.exportBackupBtn.addEventListener("click", onBackupExport);
   dom.importBackupInput.addEventListener("change", onBackupImport);
   if (dom.resetStateBtn) {
@@ -2709,7 +2711,8 @@ async function refreshMetricsFromBackend(portfolioId) {
     }
     if (typeof metrics.totalPL === "number") {
       dom.statTotalPl.textContent = formatMoney(metrics.totalPL);
-      dom.statTotalPl.style.color = metrics.totalPL >= 0 ? "var(--brand-strong)" : "var(--danger)";
+      dom.statTotalPl.classList.toggle("value-positive", metrics.totalPL >= 0);
+      dom.statTotalPl.classList.toggle("value-negative", metrics.totalPL < 0);
     }
   } catch (error) {
     backendSync.available = false;
@@ -4238,7 +4241,8 @@ async function onTaxOptimizeSubmit() {
     const rows = (result.actions || [])
       .map(
         (item) =>
-          `${item.ticker}: harvest ${formatMoney(toNum(item.suggestedHarvestLoss))} (strata ${formatMoney(toNum(item.unrealizedLoss))})`
+          // escapeHtml required: item.ticker comes from backend response and is rendered via innerHTML
+          `${escapeHtml(String(item.ticker || ""))}: harvest ${formatMoney(toNum(item.suggestedHarvestLoss))} (strata ${formatMoney(toNum(item.unrealizedLoss))})`
       )
       .join("<br/>");
     dom.taxOptimizeOutput.innerHTML = [
@@ -4908,7 +4912,7 @@ function localCalendar(days, portfolioId) {
     if (reportDate > end) {
       return;
     }
-    const reportIso = reportDate.toISOString().slice(0, 10);
+    const reportIso = `${reportDate.getFullYear()}-${String(reportDate.getMonth() + 1).padStart(2, "0")}-${String(reportDate.getDate()).padStart(2, "0")}`;
     events.push({
       date: reportIso,
       type: "Kalendarium spółek",
@@ -5468,8 +5472,8 @@ function applyAppearanceSettings() {
       document.body.dataset.fontScale = fontScale;
     }
   }
-  if (typeof document !== "undefined" && document.documentElement && document.documentElement.style) {
-    document.documentElement.style.fontSize = `${appearanceFontScaleConfig(fontScale).rootPx}px`;
+  if (typeof document !== "undefined" && document.documentElement) {
+    document.documentElement.setAttribute("data-font-scale", fontScale);
   }
   updateTabIcons(iconSet);
   renderThemeToggleButton();
@@ -6317,6 +6321,58 @@ function onCsvImport(event) {
   };
   reader.readAsText(file, "utf-8");
   event.target.value = "";
+}
+
+function onCsvExport() {
+  const headers = ["date","type","portfolio","account","asset","targetAsset","quantity","targetQuantity","price","amount","fee","currency","tags","note"];
+
+  function csvField(value) {
+    const str = value == null ? "" : String(value);
+    // Prefix formula-injection triggers so spreadsheet apps don't execute them
+    const safe = /^[=+\-@\t\r]/.test(str) ? "'" + str : str;
+    if (safe.includes(",") || safe.includes('"') || safe.includes("\n") || safe.includes("\r")) {
+      return '"' + safe.replace(/"/g, '""') + '"';
+    }
+    return safe;
+  }
+
+  function assetTicker(assetId) {
+    if (!assetId) {
+      return "";
+    }
+    const asset = findById(state.assets, assetId);
+    return asset ? asset.ticker : "";
+  }
+
+  const rows = state.operations.map((op) =>
+    [
+      op.date || "",
+      op.type || "",
+      lookupName(state.portfolios, op.portfolioId),
+      lookupName(state.accounts, op.accountId),
+      assetTicker(op.assetId),
+      assetTicker(op.targetAssetId),
+      op.quantity != null ? op.quantity : "",
+      op.targetQuantity != null ? op.targetQuantity : "",
+      op.price != null ? op.price : "",
+      op.amount != null ? op.amount : "",
+      op.fee != null ? op.fee : "",
+      op.currency || "",
+      Array.isArray(op.tags) ? op.tags.join(";") : "",
+      op.note || ""
+    ].map(csvField).join(",")
+  );
+
+  const csv = [headers.join(",")].concat(rows).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `operacje-${todayIso()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function onMailImport() {
@@ -9701,9 +9757,15 @@ function renderCurrencyCell(currency, quoteCurrency) {
   return `<span class="currency-stack"><strong>${escapeHtml(assetCurrency)}</strong>${feedLabel}</span>`;
 }
 
+const IMPORT_OPERATIONS_MAX = 5000;
+
 function importOperations(rows) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return 0;
+  }
+  if (rows.length > IMPORT_OPERATIONS_MAX) {
+    window.alert(`Plik zawiera ${rows.length} wierszy — limit importu to ${IMPORT_OPERATIONS_MAX}. Podziel plik na mniejsze części.`);
+    rows = rows.slice(0, IMPORT_OPERATIONS_MAX);
   }
   let imported = 0;
   rows.forEach((row) => {
@@ -9792,6 +9854,12 @@ function splitLine(line, delimiter) {
   for (let i = 0; i < line.length; i += 1) {
     const char = line[i];
     if (char === '"') {
+      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+        // RFC 4180: doubled quote inside a quoted field → literal quote character
+        current += '"';
+        i += 1;
+        continue;
+      }
       inQuotes = !inQuotes;
       continue;
     }
@@ -10427,7 +10495,11 @@ function normalizeDate(value) {
   if (!Number.isFinite(date.getTime())) {
     return todayIso();
   }
-  return date.toISOString().slice(0, 10);
+  // Use local date components — toISOString() returns UTC, which gives the wrong date near midnight
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatMoney(value, currency = state.meta.baseCurrency) {
@@ -10472,7 +10544,12 @@ function nowIso() {
 }
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  // Use local date components — toISOString() returns UTC which is wrong near midnight for UTC+1/+2 Polish timezone
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDateTime(value) {
@@ -10503,7 +10580,8 @@ function nextOccurrence(date, frequency) {
   } else {
     value.setMonth(value.getMonth() + 1);
   }
-  return value.toISOString().slice(0, 10);
+  // Używamy składowych lokalnych — toISOString() zwraca UTC i może dać błędną datę w pobliżu północy
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
 function clamp(value, min, max) {
