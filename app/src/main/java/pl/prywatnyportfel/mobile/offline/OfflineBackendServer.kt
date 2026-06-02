@@ -48,7 +48,11 @@ class OfflineBackendServer(
                 options("/api/{apiPath...}") { processApiRequest(call) }
 
                 get("/") {
-                    call.serveAsset("index.html")
+                    try {
+                        call.serveAsset("index.html")
+                    } catch (_: java.io.IOException) {
+                        call.respondText("Not found", status = HttpStatusCode.NotFound)
+                    }
                 }
 
                 get("/{path...}") {

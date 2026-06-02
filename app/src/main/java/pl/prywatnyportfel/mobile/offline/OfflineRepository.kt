@@ -329,14 +329,18 @@ class OfflineRepository(private val context: Context) {
                 else -> notFound("Endpoint not found: $path")
             }
         } catch (error: Exception) {
-            val logged = logError(
-                source = "server",
-                level = "error",
-                method = method,
-                path = path,
-                message = error.message ?: "Internal error",
-                detailsJson = JSONObject().put("type", error::class.java.simpleName).toString()
-            )
+            val logged = try {
+                logError(
+                    source = "server",
+                    level = "error",
+                    method = method,
+                    path = path,
+                    message = error.message ?: "Internal error",
+                    detailsJson = JSONObject().put("type", error::class.java.simpleName).toString()
+                )
+            } catch (_: Exception) {
+                JSONObject() // DB unavailable — return empty so the 500 body is still sent
+            }
             ApiDispatchResult(
                 status = 500,
                 body = JSONObject()
@@ -1855,16 +1859,14 @@ class OfflineRepository(private val context: Context) {
     private suspend fun compareModelPortfolio(): JSONObject {
         val model = modelPortfolio()
         val weights = model.optJSONArray("weights") ?: JSONArray()
-        val state = JSONObject(ensureStateJson())
-        val assets = state.optJSONArray("assets") ?: JSONArray()
-        val totalValue = computeMetrics("").marketValue.coerceAtLeast(0.0)
+        val snapshot = calculateSnapshot("")
+        val totalValue = snapshot.marketValue.coerceAtLeast(0.0)
+        // Udział waloru = wartość pozycji (cena * ilość), nie sama cena jednostkowa.
         val assetValueByTicker = HashMap<String, Double>()
-        for (i in 0 until assets.length()) {
-            val item = assets.optJSONObject(i) ?: continue
-            val ticker = item.optString("ticker", "").uppercase()
-            val value = num(item.opt("currentPrice"))
+        for (holding in snapshot.holdings) {
+            val ticker = holding.ticker.uppercase()
             if (ticker.isNotBlank()) {
-                assetValueByTicker[ticker] = value
+                assetValueByTicker[ticker] = (assetValueByTicker[ticker] ?: 0.0) + holding.marketValue
             }
         }
         val rows = JSONArray()
