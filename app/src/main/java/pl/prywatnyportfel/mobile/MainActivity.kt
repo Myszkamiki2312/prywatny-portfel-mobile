@@ -3,6 +3,7 @@ package pl.prywatnyportfel.mobile
 import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -22,6 +23,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var offlineServer: OfflineBackendServer
 
+    // Per-launch secret shared with the WebView in-process (JS bridge) and required on every
+    // /api/* call, so other apps reaching 127.0.0.1 cannot read or overwrite the portfolio.
+    private val offlineToken: String = generateOfflineToken()
+
     private var fileChooserCallback: android.webkit.ValueCallback<Array<Uri>>? = null
 
     private val chooserLauncher =
@@ -39,7 +44,11 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         swipeRefresh = findViewById(R.id.swipeRefresh)
 
-        offlineServer = OfflineBackendServer(applicationContext, OfflineRepository(applicationContext))
+        offlineServer = OfflineBackendServer(
+            applicationContext,
+            OfflineRepository(applicationContext),
+            authToken = offlineToken
+        )
         offlineServer.start()
 
         configureWebView()
@@ -74,12 +83,16 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
+        // Bridge must be registered before loadUrl so window.AndroidOffline exists when app.js runs.
+        webView.addJavascriptInterface(OfflineBridge(offlineToken), "AndroidOffline")
+
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
-        settings.allowFileAccess = true
-        settings.allowContentAccess = true
+        // UI is served over http://127.0.0.1, never file://, so no need to widen file/content access.
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
@@ -136,5 +149,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun generateOfflineToken(): String {
+        val bytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    // Minimal, read-only bridge: a single token getter, no powerful methods exposed to JS.
+    private class OfflineBridge(private val token: String) {
+        @JavascriptInterface
+        fun getOfflineToken(): String = token
     }
 }

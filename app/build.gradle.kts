@@ -5,8 +5,8 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val defaultVersionName = "1.2.25"
-val defaultVersionCode = 10225
+val defaultVersionName = "1.2.26"
+val defaultVersionCode = 10226
 val appVersionName = providers.gradleProperty("appVersionName")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
     .orElse(defaultVersionName)
@@ -34,13 +34,38 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = providers.gradleProperty("RELEASE_STORE_FILE")
+                .orElse(providers.environmentVariable("RELEASE_STORE_FILE")).orNull
+            if (storeFilePath != null) {
+                storeFile = file(storeFilePath)
+                storePassword = providers.gradleProperty("RELEASE_STORE_PASSWORD")
+                    .orElse(providers.environmentVariable("RELEASE_STORE_PASSWORD")).orNull
+                keyAlias = providers.gradleProperty("RELEASE_KEY_ALIAS")
+                    .orElse(providers.environmentVariable("RELEASE_KEY_ALIAS")).orNull
+                keyPassword = providers.gradleProperty("RELEASE_KEY_PASSWORD")
+                    .orElse(providers.environmentVariable("RELEASE_KEY_PASSWORD")).orNull
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            val hasReleaseKeystore = providers.gradleProperty("RELEASE_STORE_FILE")
+                .orElse(providers.environmentVariable("RELEASE_STORE_FILE")).orNull != null
+            // Use a real release key when RELEASE_STORE_FILE et al. are provided; otherwise fall
+            // back to the debug key so the release build still produces an installable APK.
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -55,6 +80,13 @@ android {
 
     buildFeatures {
         viewBinding = true
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
     }
 
     packaging {
@@ -81,6 +113,11 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.12.2")
+    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }
 
 val webSourceRoot = rootDir.resolve("web")

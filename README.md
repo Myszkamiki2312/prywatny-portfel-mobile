@@ -23,10 +23,27 @@ Desktopowa aplikacja pozostaje bez zmian.
 ## Jak to działa
 
 - Frontend mobilny jest trzymany w `web/` i kopiowany do assets APK przy buildzie.
-- Dane portfela są zapisywane w Supabase, w tabeli `app_states`.
+- Aplikacja Android to cienki WebView. Przy starcie odpala **wbudowany serwer Ktor na
+  `http://127.0.0.1:18765`**, który serwuje frontend z assets i wystawia lokalne API `/api/*`
+  (notowania, raporty, skaner, narzędzia) liczone z lokalnej bazy Room (mirror stanu).
+- Dane portfela są źródłowo zapisywane w Supabase, w tabeli `app_states` (`CLOUD_ONLY_DATA`).
+  Lokalna baza Room to tylko kopia robocza dla narzędzi offline oraz konfiguracja narzędzi
+  (kopie, powiadomienia, alerty), trzymana w `kv_store`.
 - Użytkownik widzi ekran logowania/rejestracji przez e-mail i hasło.
 - Jeśli konto nie istnieje, aplikacja próbuje je utworzyć przez Supabase Auth.
-- Lokalnie zostaje tylko sesja logowania oraz konfiguracja połączenia, nie główny stan portfela.
+- Lokalnie zostaje sesja logowania, konfiguracja połączenia i kopia robocza stanu, nie główne
+  źródło prawdy portfela.
+
+## Bezpieczeństwo lokalnego API
+
+- Lokalne API `/api/*` wystawia cały stan portfela. Mimo bindowania na `127.0.0.1`, loopback jest
+  osiągalny dla innych aplikacji na urządzeniu, dlatego każde żądanie `/api/*` wymaga nagłówka
+  `X-Offline-Token`.
+- Token jest losowany przy każdym starcie aplikacji (`SecureRandom`) i przekazywany do WebView
+  wyłącznie w procesie, przez mostek JS `window.AndroidOffline.getOfflineToken()` — nigdy po HTTP.
+- Statyczne assets UI pozostają otwarte (nie są tajne), chronione są tylko dane pod `/api/*`.
+- Klucz `anon public` Supabase jest publiczny z założenia — dostęp do danych chroni RLS na tabeli
+  `app_states` (patrz `docs/supabase-schema.sql`).
 
 ## Supabase
 

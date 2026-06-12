@@ -1,0 +1,51 @@
+name: Supabase Keep-Alive
+
+# Supabase free tier pauses a project after ~7 days of inactivity. A small daily request
+# counts as activity and keeps the project (Auth + app_states) running, so users never hit
+# a paused backend. No app changes required.
+
+on:
+  schedule:
+    # Daily at 06:17 UTC (odd minute: GitHub delays/aligns busy times). Well under the 7-day window.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    env:
+      # Defaults are the public project URL + publishable anon key already shipped in
+      # web/supabase-config.js. Override with repo secrets if you rotate them.
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://kcvrgbzluyjvuynqoezd.supabase.co' }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_g9Ki1EBtOPDFyErEVcqajA_29nJZANV' }}
+    steps:
+      - name: Ping Supabase (exercise Postgres + Auth origin)
+        run: |
+          set -uo pipefail
+
+          # A reply from the origin service (even 401/403/404 from RLS) registers activity and
+          # keeps the project awake. Only an edge/origin-down code (52x) or no connection (000)
+          # means the project is paused/unreachable. So we classify by code, not by 2xx.
+          probe() {
+            local url="$1" label="$2" code
+            code=$(curl -s -m 30 --retry 2 --retry-delay 5 \
+                     -H "apikey: ${SUPABASE_ANON_KEY}" \
+                     -o /dev/null -w "%{http_code}" "$url" || echo "000")
+            echo "${label}: HTTP ${code}"
+            case "$code" in
+              000|502|503|520|521|522|523|530) return 1 ;;  # paused / edge or origin down
+              *) return 0 ;;                                  # origin responded -> activity logged
+            esac
+          }
+
+          ok=0
+          # Hits PostgREST -> Postgres (RLS denies anon, but the query reaches the DB compute).
+          probe "${SUPABASE_URL}/rest/v1/app_states?select=user_id&limit=1" "rest/app_states" && ok=1 || true
+          # Hits GoTrue auth origin.
+          probe "${SUPABASE_URL}/auth/v1/health" "auth/health" && ok=1 || true
+
+          if [ "$ok" -ne 1 ]; then
+            echo "Supabase looks paused/unreachable — resume it from the dashboard." >&2
+            exit 1
+          fi
+          echo "Keep-alive OK — activity registered."

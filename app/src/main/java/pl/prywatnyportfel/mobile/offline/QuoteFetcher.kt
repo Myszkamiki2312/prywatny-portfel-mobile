@@ -1,5 +1,6 @@
 package pl.prywatnyportfel.mobile.offline
 
+import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -12,6 +13,9 @@ data class QuoteFetchResult(
 )
 
 object QuoteFetcher {
+    private const val CONNECT_TIMEOUT_MS = 4000
+    private const val READ_TIMEOUT_MS = 4000
+
     fun fetch(ticker: String): QuoteFetchResult? {
         val cleanTicker = ticker.trim().uppercase()
         if (cleanTicker.isBlank()) {
@@ -32,7 +36,24 @@ object QuoteFetcher {
         return try {
             val encoded = URLEncoder.encode(stooqSymbol.lowercase(), StandardCharsets.UTF_8.name())
             val url = URL("https://stooq.com/q/l/?s=$encoded&f=sd2t2ohlcv&h&e=csv")
-            val content = url.readText(Charsets.UTF_8)
+            // Bounded I/O: without timeouts a stalled connection hangs the refresh coroutine forever.
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                requestMethod = "GET"
+                // Don't silently follow a redirect to an arbitrary host (MITM/DNS hijack of stooq).
+                instanceFollowRedirects = false
+            }
+            val content = try {
+                if (connection.responseCode !in 200..299) {
+                    // Drain the error body so the socket can be released cleanly.
+                    connection.errorStream?.use { it.readBytes() }
+                    return null
+                }
+                connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } finally {
+                connection.disconnect()
+            }
             val lines = content.lines().filter { it.isNotBlank() }
             if (lines.size < 2) {
                 return null

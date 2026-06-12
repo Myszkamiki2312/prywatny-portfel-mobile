@@ -3,7 +3,13 @@ package pl.prywatnyportfel.mobile.offline
 import android.content.Context
 import io.ktor.http.Parameters
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -58,6 +64,10 @@ data class PortfolioSnapshot(
 class OfflineRepository(private val context: Context) {
     private val dao = OfflineDatabase.get(context).dao()
 
+    // Serializes read-modify-write sequences on the single state snapshot. Ktor/CIO dispatches
+    // requests concurrently, so without this two overlapping writers would lose-update each other.
+    private val stateMutex = Mutex()
+
     suspend fun dispatch(
         method: String,
         apiPath: String,
@@ -79,7 +89,7 @@ class OfflineRepository(private val context: Context) {
                     ok(rawJsonObject("state", stateJson))
                 }
 
-                method == "PUT" && path == "/state" -> {
+                method == "PUT" && path == "/state" -> stateMutex.withLock {
                     val stateJson = extractStateJsonFromPayload(bodyText)
                     dao.upsertStateSnapshot(
                         StateSnapshotEntity(
@@ -133,7 +143,7 @@ class OfflineRepository(private val context: Context) {
                 method == "POST" && path.startsWith("/import/broker/") -> {
                     val broker = path.removePrefix("/import/broker/")
                     val payload = safeJsonObject(bodyText)
-                    ok(JSONObject().put("import", importBrokerCsv(broker, payload)))
+                    ok(JSONObject().put("import", stateMutex.withLock { importBrokerCsv(broker, payload) }))
                 }
 
                 method == "GET" && path == "/quotes" -> {
@@ -280,7 +290,7 @@ class OfflineRepository(private val context: Context) {
                     ok(JSONObject().put("events", buildCalendar(days, portfolioId)))
                 }
                 method == "GET" && path == "/tools/recommendations" -> ok(JSONObject().put("recommendations", buildRecommendations(query["portfolioId"].orEmpty())))
-                method == "POST" && path == "/tools/alerts/run" -> ok(runAlertWorkflow(safeJsonObject(bodyText)))
+                method == "POST" && path == "/tools/alerts/run" -> ok(stateMutex.withLock { runAlertWorkflow(safeJsonObject(bodyText)) })
 
                 method == "GET" && path == "/tools/alerts/history" -> {
                     val limit = query["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 80
@@ -323,7 +333,7 @@ class OfflineRepository(private val context: Context) {
                 method == "PUT" && path == "/tools/model-portfolio" -> ok(saveModelPortfolio(safeJsonObject(bodyText)))
                 method == "GET" && path == "/tools/model-portfolio/compare" -> ok(compareModelPortfolio())
                 method == "GET" && path == "/tools/public-portfolios" -> ok(publicPortfolios())
-                method == "POST" && path == "/tools/public-portfolios/clone" -> ok(clonePublicPortfolio(safeJsonObject(bodyText)))
+                method == "POST" && path == "/tools/public-portfolios/clone" -> ok(stateMutex.withLock { clonePublicPortfolio(safeJsonObject(bodyText)) })
 
                 path.startsWith("/tools/") -> ok(JSONObject())
                 else -> notFound("Endpoint not found: $path")
@@ -389,28 +399,37 @@ class OfflineRepository(private val context: Context) {
             availableByTicker.keys.toList()
         }
 
-        val rows = mutableListOf<QuoteEntity>()
-        for (ticker in targetTickers) {
-            val asset = availableByTicker[ticker]
-            val cachedPrice = asset?.optDouble("currentPrice", 0.0) ?: 0.0
-            val quote = withContext(Dispatchers.IO) { QuoteFetcher.fetch(ticker) }
-            val price = when {
-                quote != null && quote.price > 0.0 -> quote.price
-                cachedPrice > 0.0 -> cachedPrice
-                else -> 0.0
-            }
-            val currency = when {
-                quote != null -> quote.currency
-                asset != null -> asset.optString("currency", "PLN")
-                else -> "PLN"
-            }
-            rows += QuoteEntity(
-                ticker = ticker,
-                price = round2(price),
-                currency = currency,
-                provider = quote?.provider ?: if (price > 0) "offline-asset" else "offline",
-                fetchedAt = nowIso()
-            )
+        // Fetch tickers concurrently on the IO dispatcher (sequential loop scaled linearly), but cap
+        // in-flight requests with a semaphore so a large portfolio doesn't open dozens of sockets at
+        // once and get rate-limited / banned by the quote provider.
+        val gate = Semaphore(MAX_QUOTE_CONCURRENCY)
+        val rows = coroutineScope {
+            targetTickers.map { ticker ->
+                async(Dispatchers.IO) {
+                    gate.withPermit {
+                    val asset = availableByTicker[ticker]
+                    val cachedPrice = asset?.optDouble("currentPrice", 0.0) ?: 0.0
+                    val quote = QuoteFetcher.fetch(ticker)
+                    val price = when {
+                        quote != null && quote.price > 0.0 -> quote.price
+                        cachedPrice > 0.0 -> cachedPrice
+                        else -> 0.0
+                    }
+                    val currency = when {
+                        quote != null -> quote.currency
+                        asset != null -> asset.optString("currency", "PLN")
+                        else -> "PLN"
+                    }
+                    QuoteEntity(
+                        ticker = ticker,
+                        price = round2(price),
+                        currency = currency,
+                        provider = quote?.provider ?: if (price > 0) "offline-asset" else "offline",
+                        fetchedAt = nowIso()
+                    )
+                    }
+                }
+            }.awaitAll()
         }
         if (rows.isNotEmpty()) {
             dao.upsertQuotes(rows)
@@ -513,11 +532,31 @@ class OfflineRepository(private val context: Context) {
             }
         }
 
+        // Multi-currency: convert every native amount to base via state.meta.fxRates (the same
+        // table the JS engine uses), so mixed-currency portfolios don't sum raw across currencies.
+        val meta = state.optJSONObject("meta")
+        val baseCurrency = normalizeCurrency(meta?.optString("baseCurrency", "PLN"), "PLN")
+        val fxRates = parseFxRates(meta)
+        val accountsById = HashMap<String, JSONObject>()
+        val accountsArr = state.optJSONArray("accounts") ?: JSONArray()
+        for (i in 0 until accountsArr.length()) {
+            val acc = accountsArr.optJSONObject(i) ?: continue
+            val id = acc.optString("id", "")
+            if (id.isNotBlank()) {
+                accountsById[id] = acc
+            }
+        }
+
         val qtyByAsset = HashMap<String, Double>()
-        val costByAsset = HashMap<String, Double>()
+        val costByAsset = HashMap<String, Double>() // stored in base currency
         val lastPriceByAsset = HashMap<String, Double>()
         var cash = 0.0
         var contributions = 0.0
+        // Mirror the JS dashboard engine: track realized gains, dividends and fees separately so
+        // totalPl = unrealized + realized + dividends - fees (not netWorth - contributions).
+        var realized = 0.0
+        var dividends = 0.0
+        var fees = 0.0
 
         for (i in 0 until operations.length()) {
             val op = operations.optJSONObject(i) ?: continue
@@ -535,10 +574,24 @@ class OfflineRepository(private val context: Context) {
             if (assetId.isNotBlank() && price > 0.0) {
                 lastPriceByAsset[assetId] = price
             }
+            // One currency per operation (asset > account > op > base), like resolveOperationCurrency
+            // in JS. All monetary effects of this op are converted to base through it.
+            val opAsset = assetsById[assetId]
+            val opAccount = accountsById[op.optString("accountId", "")]
+            val opCurrency = normalizeCurrency(
+                when {
+                    !opAsset?.optString("currency", "").isNullOrBlank() -> opAsset?.optString("currency", "")
+                    !opAccount?.optString("currency", "").isNullOrBlank() -> opAccount?.optString("currency", "")
+                    op.optString("currency", "").isNotBlank() -> op.optString("currency", "")
+                    else -> baseCurrency
+                },
+                baseCurrency
+            )
+            val toB = { native: Double -> toBaseAmount(native, opCurrency, baseCurrency, fxRates) }
 
             when {
                 type.contains("gotowk") || type.contains("wplata") || type.contains("cash") || type.contains("transfer") -> {
-                    val signed = if (amountRaw != 0.0) amountRaw else amount
+                    val signed = toB(if (amountRaw != 0.0) amountRaw else amount)
                     cash += signed
                     if (signed > 0.0) {
                         contributions += signed
@@ -546,40 +599,83 @@ class OfflineRepository(private val context: Context) {
                 }
 
                 type.contains("kupno") || type.contains("buy") -> {
-                    cash -= amount + fee
+                    val totalBase = toB(amount + fee)
+                    cash -= totalBase
+                    fees += toB(fee)
                     if (assetId.isNotBlank()) {
                         qtyByAsset[assetId] = (qtyByAsset[assetId] ?: 0.0) + quantity
-                        costByAsset[assetId] = (costByAsset[assetId] ?: 0.0) + amount + fee
+                        costByAsset[assetId] = (costByAsset[assetId] ?: 0.0) + totalBase
                     }
                 }
 
                 type.contains("sprzed") || type.contains("sell") -> {
-                    cash += amount - fee
+                    val netProceeds = toB(amount - fee)
+                    cash += netProceeds
+                    fees += toB(fee)
+                    var costReduction = 0.0
                     if (assetId.isNotBlank()) {
                         val beforeQty = qtyByAsset[assetId] ?: 0.0
                         val beforeCost = costByAsset[assetId] ?: 0.0
                         if (beforeQty > 0.0) {
                             val sold = kotlin.math.min(quantity, beforeQty)
                             val avgCost = beforeCost / beforeQty
-                            val costReduction = avgCost * sold
-                            qtyByAsset[assetId] = (beforeQty - sold).coerceAtLeast(0.0)
-                            costByAsset[assetId] = (beforeCost - costReduction).coerceAtLeast(0.0)
+                            costReduction = avgCost * sold
+                            // Snap float residue to exactly 0 after a full sell, otherwise dust like
+                            // 1e-13 survives the `quantity <= 0.0` guard below and shows as a phantom
+                            // holding (and blows up avgCost on the next sell via beforeCost/dust).
+                            val nextQty = (beforeQty - sold).coerceAtLeast(0.0)
+                            val nextCost = (beforeCost - costReduction).coerceAtLeast(0.0)
+                            qtyByAsset[assetId] = if (nextQty < 1e-9) 0.0 else nextQty
+                            costByAsset[assetId] = if (nextCost < 1e-6) 0.0 else nextCost
                         }
+                    }
+                    realized += netProceeds - costReduction
+                }
+
+                type.contains("konwers") || type.contains("convert") -> {
+                    // Move book cost (base currency) from source to target asset (JS engine parity);
+                    // no realized gain on a conversion, fee reduces cash.
+                    if (assetId.isNotBlank()) {
+                        val beforeQty = qtyByAsset[assetId] ?: 0.0
+                        val beforeCost = costByAsset[assetId] ?: 0.0
+                        val avg = if (beforeQty > 0.0) beforeCost / beforeQty else toB(price)
+                        val costOut = avg * quantity
+                        val nextQty = (beforeQty - quantity).coerceAtLeast(0.0)
+                        val nextCost = (beforeCost - costOut).coerceAtLeast(0.0)
+                        qtyByAsset[assetId] = if (nextQty < 1e-9) 0.0 else nextQty
+                        costByAsset[assetId] = if (nextCost < 1e-6) 0.0 else nextCost
+
+                        val targetAssetId = op.optString("targetAssetId", "")
+                        if (targetAssetId.isNotBlank()) {
+                            val targetQty = kotlin.math.abs(num(op.opt("targetQuantity")))
+                            val receivedQty = if (targetQty > 0.0) targetQty else quantity
+                            qtyByAsset[targetAssetId] = (qtyByAsset[targetAssetId] ?: 0.0) + receivedQty
+                            costByAsset[targetAssetId] = (costByAsset[targetAssetId] ?: 0.0) + costOut + toB(fee)
+                        }
+                    }
+                    if (fee > 0.0) {
+                        cash -= toB(fee)
+                        fees += toB(fee)
                     }
                 }
 
                 type.contains("dywidend") || type.contains("odsetk") || type.contains("dividend") || type.contains("interest") -> {
-                    cash += amount
+                    val gross = toB(amount)
+                    cash += gross
+                    dividends += gross
                 }
 
                 type.contains("prowiz") || type.contains("fee") || type.contains("commission") -> {
-                    cash -= kotlin.math.abs(if (amountRaw != 0.0) amountRaw else fee)
+                    val feeAmount = toB(kotlin.math.abs(if (amountRaw != 0.0) amountRaw else fee))
+                    cash -= feeAmount
+                    fees += feeAmount
                 }
             }
         }
 
         val holdings = mutableListOf<HoldingRow>()
         var marketValue = 0.0
+        var bookValue = 0.0
         for ((assetId, quantity) in qtyByAsset) {
             if (quantity <= 0.0) {
                 continue
@@ -588,14 +684,16 @@ class OfflineRepository(private val context: Context) {
             val assetPrice = num(asset.opt("currentPrice"))
             val fallbackPrice = lastPriceByAsset[assetId] ?: 0.0
             val currentPrice = if (assetPrice > 0.0) assetPrice else fallbackPrice
-            val costValue = (costByAsset[assetId] ?: 0.0).coerceAtLeast(0.0)
-            val value = quantity * currentPrice
+            val assetCurrency = normalizeCurrency(asset.optString("currency", ""), baseCurrency)
+            val costValue = (costByAsset[assetId] ?: 0.0).coerceAtLeast(0.0) // base currency
+            // Price is in the asset's currency; convert the position value to base. Cost is already base.
+            val value = toBaseAmount(quantity * currentPrice, assetCurrency, baseCurrency, fxRates)
             val unrealized = value - costValue
             holdings += HoldingRow(
                 assetId = assetId,
                 ticker = asset.optString("ticker", ""),
                 name = asset.optString("name", ""),
-                currency = asset.optString("currency", state.optJSONObject("meta")?.optString("baseCurrency", "PLN") ?: "PLN"),
+                currency = assetCurrency,
                 risk = num(asset.opt("risk")).coerceIn(1.0, 10.0),
                 sector = asset.optString("sector", ""),
                 quantity = round6(quantity),
@@ -608,6 +706,7 @@ class OfflineRepository(private val context: Context) {
                 sharePct = 0.0
             )
             marketValue += value
+            bookValue += costValue
         }
 
         val holdingsWithShare = holdings.map { row ->
@@ -617,8 +716,21 @@ class OfflineRepository(private val context: Context) {
                 row.copy(sharePct = round2((row.marketValue / marketValue) * 100.0))
             }
         }
-        val netWorth = marketValue + cash
-        val totalPl = netWorth - contributions
+        // Global liabilities are not portfolio-scoped; only subtract them from the global snapshot
+        // (blank portfolioId) so per-portfolio reports don't each double-count the same debt.
+        var liabilitiesTotal = 0.0
+        if (portfolioId.isBlank()) {
+            val liabilitiesArr = state.optJSONArray("liabilities") ?: JSONArray()
+            for (i in 0 until liabilitiesArr.length()) {
+                val row = liabilitiesArr.optJSONObject(i) ?: continue
+                val liabilityCurrency = normalizeCurrency(row.optString("currency", ""), baseCurrency)
+                liabilitiesTotal += toBaseAmount(num(row.opt("amount")), liabilityCurrency, baseCurrency, fxRates)
+            }
+        }
+        // JS-aligned accounting: net worth subtracts liabilities; P/L sums its components.
+        val unrealized = marketValue - bookValue
+        val netWorth = marketValue + cash - liabilitiesTotal
+        val totalPl = unrealized + realized + dividends - fees
         return PortfolioSnapshot(
             portfolioId = portfolioId,
             cash = round2(cash),
@@ -727,6 +839,7 @@ class OfflineRepository(private val context: Context) {
         val sectorFilter = filters.optString("sector", "").trim().lowercase()
         val portfolioId = filters.optString("portfolioId", "")
         val state = loadStateObject()
+        val (baseCurrency, fxRates) = baseAndRates(state)
         val assets = state.optJSONArray("assets") ?: JSONArray()
         val snapshot = calculateSnapshot(portfolioId)
         val holdingByAsset = snapshot.holdings.associateBy { it.assetId }
@@ -735,11 +848,15 @@ class OfflineRepository(private val context: Context) {
             val asset = assets.optJSONObject(i) ?: continue
             val assetId = asset.optString("id", "")
             val holding = holdingByAsset[assetId]
-            val price = if (holding != null && holding.currentPrice > 0.0) {
+            // Convert price to base so score weighting and the minPrice filter compare apples to
+            // apples across currencies (a USD 150 and a PLN 150 asset are not the same value).
+            val nativePrice = if (holding != null && holding.currentPrice > 0.0) {
                 holding.currentPrice
             } else {
                 num(asset.opt("currentPrice"))
             }
+            val assetCurrency = normalizeCurrency(asset.optString("currency", ""), baseCurrency)
+            val price = toBaseAmount(nativePrice, assetCurrency, baseCurrency, fxRates)
             val risk = num(asset.opt("risk")).coerceIn(1.0, 10.0)
             val share = holding?.sharePct ?: 0.0
             val unrealizedPct = holding?.unrealizedPct ?: 0.0
@@ -776,7 +893,7 @@ class OfflineRepository(private val context: Context) {
                     .put("score", round2(score))
                     .put("risk", round2(risk))
                     .put("price", round2(price))
-                    .put("currency", asset.optString("currency", state.optJSONObject("meta")?.optString("baseCurrency", "PLN") ?: "PLN"))
+                    .put("currency", baseCurrency)
                     .put("share", round2(share))
                     .put("unrealizedPct", round2(unrealizedPct))
                     .put("sector", sector)
@@ -1212,6 +1329,11 @@ class OfflineRepository(private val context: Context) {
         }
         val output = mutableListOf<Map<String, String>>()
         for (i in 1 until lines.size) {
+            // Stop materializing rows once the import cap is reached, instead of building the whole
+            // (possibly huge) list and truncating later — bounds memory on oversized input.
+            if (output.size >= IMPORT_MAX_ROWS) {
+                break
+            }
             val fields = parseCsvLine(lines[i], delimiter)
             val row = HashMap<String, String>()
             for (idx in header.indices) {
@@ -2103,6 +2225,94 @@ class OfflineRepository(private val context: Context) {
             .replace("-", "")
     }
 
+    // --- Currency / FX (ported from the JS engine so reports match the dashboard) ---
+
+    private fun normalizeCurrency(value: String?, fallback: String): String {
+        val text = (value ?: "").uppercase().trim()
+        return if (FX_CURRENCY_REGEX.matches(text)) text else fallback
+    }
+
+    private fun normalizeFxPairKey(value: String): String {
+        val text = value.uppercase().trim().removePrefix("FX:")
+        if (text.isEmpty()) {
+            return ""
+        }
+        FX_PAIR_SLASH_REGEX.matchEntire(text)?.destructured?.let { (a, b) ->
+            if (a != b) return "$a/$b"
+        }
+        FX_PAIR_PLAIN_REGEX.matchEntire(text)?.destructured?.let { (a, b) ->
+            if (a != b) return "$a/$b"
+        }
+        return ""
+    }
+
+    private fun parseFxRates(meta: JSONObject?): Map<String, Double> {
+        val raw = meta?.optJSONObject("fxRates") ?: return emptyMap()
+        val out = HashMap<String, Double>()
+        val keys = raw.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val pair = normalizeFxPairKey(key)
+            val rate = num(raw.opt(key))
+            if (pair.isNotEmpty() && rate > 0.0) {
+                out[pair] = rate
+            }
+        }
+        return out
+    }
+
+    // Multiplicative rate from -> to by BFS over the rate graph (pair gives src->dst and dst->src=1/r).
+    private fun fxRate(from: String, to: String, rates: Map<String, Double>): Double {
+        val base = normalizeCurrency(from, "")
+        val quote = normalizeCurrency(to, "")
+        if (base.isEmpty() || quote.isEmpty()) {
+            return 0.0
+        }
+        if (base == quote) {
+            return 1.0
+        }
+        val queue = ArrayDeque<Pair<String, Double>>()
+        queue.add(base to 1.0)
+        val visited = HashSet<String>().apply { add(base) }
+        while (queue.isNotEmpty()) {
+            val (cur, rate) = queue.removeFirst()
+            if (cur == quote) {
+                return rate
+            }
+            for ((pairKey, pairRate) in rates) {
+                val parts = pairKey.split("/")
+                if (parts.size != 2 || pairRate <= 0.0) {
+                    continue
+                }
+                val src = parts[0]
+                val dst = parts[1]
+                if (src == cur && dst !in visited) {
+                    visited.add(dst)
+                    queue.add(dst to rate * pairRate)
+                } else if (dst == cur && src !in visited) {
+                    visited.add(src)
+                    queue.add(src to rate / pairRate)
+                }
+            }
+        }
+        return 0.0
+    }
+
+    private fun baseAndRates(state: JSONObject): Pair<String, Map<String, Double>> {
+        val meta = state.optJSONObject("meta")
+        return normalizeCurrency(meta?.optString("baseCurrency", "PLN"), "PLN") to parseFxRates(meta)
+    }
+
+    private fun toBaseAmount(amount: Double, currency: String, base: String, rates: Map<String, Double>): Double {
+        val from = normalizeCurrency(currency, "")
+        val to = normalizeCurrency(base, "")
+        if (from.isEmpty() || to.isEmpty() || from == to) {
+            return amount
+        }
+        val rate = fxRate(from, to, rates)
+        return if (rate > 0.0) amount * rate else amount
+    }
+
     private fun nowIso(): String = Instant.now().toString()
 
     private fun todayIso(): String = LocalDate.now(ZoneId.systemDefault()).toString()
@@ -2130,6 +2340,10 @@ class OfflineRepository(private val context: Context) {
 
     companion object {
         private const val IMPORT_MAX_ROWS = 5000
+        private const val MAX_QUOTE_CONCURRENCY = 6
+        private val FX_CURRENCY_REGEX = Regex("^[A-Z]{3}$")
+        private val FX_PAIR_SLASH_REGEX = Regex("^([A-Z]{3})/([A-Z]{3})$")
+        private val FX_PAIR_PLAIN_REGEX = Regex("^([A-Z]{3})([A-Z]{3})(?:=X)?$")
         private const val KEY_REALTIME_CONFIG = "realtime_config"
         private const val KEY_NOTIFICATION_CONFIG = "notification_config"
         private const val KEY_NOTIFICATION_HISTORY = "notification_history"

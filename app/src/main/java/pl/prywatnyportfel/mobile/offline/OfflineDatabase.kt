@@ -11,6 +11,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 
 @Entity(tableName = "state_snapshot")
 data class StateSnapshotEntity(
@@ -140,8 +141,20 @@ abstract class OfflineDatabase : RoomDatabase() {
                         context.applicationContext,
                         OfflineDatabase::class.java,
                         "prywatny_portfel_offline.db"
-                    ).fallbackToDestructiveMigration().build().also { INSTANCE = it }
+                    )
+                        .addMigrations(*MIGRATIONS)
+                        // No destructive fallback on UPGRADE: a schema bump must ship a Migration,
+                        // otherwise local-only config in kv_store (backups, notifications, forum,
+                        // option positions, model portfolio) would be silently wiped.
+                        // Allow it only on DOWNGRADE (installing an older APK over a newer DB),
+                        // which is rare and otherwise crash-loops the app on launch.
+                        .fallbackToDestructiveMigrationOnDowngrade()
+                        .build()
+                        .also { INSTANCE = it }
             }
         }
+
+        // Register a Migration(N, N+1) here every time @Database(version = ...) is increased.
+        private val MIGRATIONS: Array<Migration> = emptyArray()
     }
 }

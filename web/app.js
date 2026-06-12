@@ -9,6 +9,26 @@ const SUPABASE_APP_CONFIG =
     ? window.PRIVATE_PORTFOLIO_SUPABASE
     : {};
 const API_BASE = "/api";
+
+// Per-launch token from the native bridge, required on every /api/* call so other apps on the
+// device cannot reach the local backend. Read once and cached.
+let offlineApiTokenCache = null;
+function offlineApiToken() {
+  if (offlineApiTokenCache !== null) {
+    return offlineApiTokenCache;
+  }
+  let token = "";
+  try {
+    if (window.AndroidOffline && typeof window.AndroidOffline.getOfflineToken === "function") {
+      token = String(window.AndroidOffline.getOfflineToken() || "");
+    }
+  } catch (error) {
+    token = "";
+  }
+  offlineApiTokenCache = token;
+  return token;
+}
+
 const SOLO_PLAN = "Expert";
 const PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"];
 const PLAN_LIMITS = {
@@ -286,7 +306,12 @@ const cloudSyncRuntime = {
   pushTimer: 0,
   pushInFlight: false,
   pullInFlight: false,
-  suppressPush: false
+  suppressPush: false,
+  // Set when a session pull fails before we ever loaded cloud data. While true, pushes are
+  // blocked so a possibly-empty local state can't overwrite a good cloud portfolio.
+  pullFailed: false,
+  // updated_at of the cloud row we last reconciled with, used to detect another device writing.
+  remoteUpdatedAt: ""
 };
 const candlesView = {
   all: [],
@@ -666,6 +691,35 @@ function assertCloudSyncReady({ requireSession = true } = {}) {
   }
 }
 
+// Exchanges the stored refresh token for a fresh access token. Returns true on success.
+async function refreshCloudSession() {
+  if (!cloudSyncConfig.refreshToken) {
+    return false;
+  }
+  try {
+    const payload = await supabaseRequest("/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      useAnonAuth: true,
+      body: { refresh_token: cloudSyncConfig.refreshToken }
+    });
+    const session = payload && (payload.session || payload);
+    const accessToken = session && session.access_token;
+    if (!accessToken) {
+      return false;
+    }
+    cloudSyncConfig = normalizeCloudSyncConfig({
+      ...cloudSyncConfig,
+      accessToken,
+      refreshToken: (session && session.refresh_token) || cloudSyncConfig.refreshToken,
+      lastError: ""
+    });
+    saveCloudSyncConfig();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function supabaseRequest(path, options = {}) {
   assertCloudSyncReady({ requireSession: Boolean(options.requireSession) });
   const headers = {
@@ -687,6 +741,17 @@ async function supabaseRequest(path, options = {}) {
     payload = { message: text };
   }
   if (!response.ok) {
+    // Access token likely expired: refresh once and replay the original request.
+    if (
+      response.status === 401 &&
+      options.requireSession &&
+      !options.useAnonAuth &&
+      !options._retried &&
+      cloudSyncConfig.refreshToken &&
+      (await refreshCloudSession())
+    ) {
+      return supabaseRequest(path, { ...options, _retried: true });
+    }
     const message = normalizeSupabaseError(payload, response.status);
     throw new Error(message);
   }
@@ -1009,16 +1074,57 @@ function scheduleCloudPush() {
   }, 1800);
 }
 
+// True if the cloud row was updated (by another device) after the snapshot we last reconciled.
+async function remoteStateChangedSinceSync() {
+  if (!cloudSyncRuntime.remoteUpdatedAt) {
+    return false;
+  }
+  try {
+    const payload = await supabaseRequest(
+      `/rest/v1/app_states?user_id=eq.${encodeURIComponent(cloudSyncConfig.userId)}&select=updated_at&limit=1`,
+      { requireSession: true }
+    );
+    const row = Array.isArray(payload) ? payload[0] : null;
+    const remoteMs = Date.parse(row ? String(row.updated_at || "") : "");
+    const knownMs = Date.parse(cloudSyncRuntime.remoteUpdatedAt);
+    return Number.isFinite(remoteMs) && Number.isFinite(knownMs) && remoteMs > knownMs;
+  } catch (error) {
+    // Flaky probe must not block saves.
+    return false;
+  }
+}
+
 async function pushCloudState({ force = false, reason = "manual" } = {}) {
   if (cloudSyncRuntime.pushInFlight) {
     return;
   }
+  // Claim the in-flight slot before any await (incl. the conflict probe) so two pushes
+  // cannot interleave. The finally block always releases it, including on early returns.
+  cloudSyncRuntime.pushInFlight = true;
   try {
     assertCloudSyncReady({ requireSession: true });
     if (!force && !cloudSyncConfig.enabled) {
       return;
     }
-    cloudSyncRuntime.pushInFlight = true;
+    // A pull is replacing `state` right now: a debounced auto-push scheduled before the pull
+    // must not fire mid-pull and push the pre-pull state back to the cloud.
+    if (!force && cloudSyncRuntime.suppressPush) {
+      return;
+    }
+    if (!force && cloudSyncRuntime.pullFailed) {
+      showToast(
+        "Nie pobrano danych z chmury w tej sesji — zapis wstrzymany, by nie nadpisać portfela. Odśwież dane i spróbuj ponownie.",
+        "error"
+      );
+      return;
+    }
+    if (!force && (await remoteStateChangedSinceSync())) {
+      showToast(
+        "Portfel zmienił się na innym urządzeniu. Odśwież dane (pull) przed zapisem, by nie nadpisać zmian.",
+        "error"
+      );
+      return;
+    }
     updateCloudSyncInfo(reason === "auto" ? "Synchronizuję zmiany..." : "Wysyłam dane do Supabase...");
     const now = nowIso();
     await supabaseRequest("/rest/v1/app_states?on_conflict=user_id", {
@@ -1033,6 +1139,8 @@ async function pushCloudState({ force = false, reason = "manual" } = {}) {
     });
     cloudSyncConfig.lastSyncAt = now;
     cloudSyncConfig.lastError = "";
+    // We are now the latest writer; record it so the next conflict check compares against this.
+    cloudSyncRuntime.remoteUpdatedAt = now;
     saveCloudSyncConfig();
     if (reason !== "auto") {
       showToast("Dane wysłane do Supabase.", "info");
@@ -1060,8 +1168,11 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
       `/rest/v1/app_states?user_id=eq.${encodeURIComponent(cloudSyncConfig.userId)}&select=state,updated_at&limit=1`,
       { requireSession: true }
     );
+    // Reached Supabase and got a valid response: local state is now safe to push again.
+    cloudSyncRuntime.pullFailed = false;
     const row = Array.isArray(payload) ? payload[0] : null;
     if (!row || !row.state) {
+      cloudSyncRuntime.remoteUpdatedAt = "";
       if (createIfMissing) {
         await pushCloudState({ force: true, reason: "initial" });
       } else if (!silent) {
@@ -1070,6 +1181,7 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
       return;
     }
     cloudSyncRuntime.suppressPush = true;
+    cloudSyncRuntime.remoteUpdatedAt = String(row.updated_at || "");
     state = normalizeState(row.state);
     if (!CLOUD_ONLY_DATA) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -1083,6 +1195,8 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
       showToast("Dane pobrane z Supabase.", "info");
     }
   } catch (error) {
+    // Never loaded cloud data this session — block pushes so we don't clobber the cloud.
+    cloudSyncRuntime.pullFailed = true;
     cloudSyncConfig.lastError = error.message;
     saveCloudSyncConfig();
     showToast(`Supabase: ${error.message}`, "error");
@@ -1355,7 +1469,7 @@ function syncOperationFormMode() {
   const type = String(typeInput ? typeInput.value : "");
   const isCash = type === "Operacja gotówkowa" || type === "Przelew gotówkowy" || type === "Przelewy gotówkowe";
   const isBuySell = type === "Kupno waloru" || type === "Sprzedaż waloru";
-  const isConversion = type === "Konwersja waloru" || type === "Konwersje walorów";
+  const isConversion = type.startsWith("Konwersj");
   const visibleFields = new Set(
     isCash
       ? ["date", "type", "portfolioId", "accountId", "amount", "currency", "tags", "note"]
@@ -5197,6 +5311,10 @@ async function apiRequest(path, options = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   const headers = {};
+  const offlineToken = offlineApiToken();
+  if (offlineToken) {
+    headers["X-Offline-Token"] = offlineToken;
+  }
   let body = undefined;
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -6121,11 +6239,11 @@ function onOperationSubmit(event) {
     accountId,
     assetId,
     targetAssetId,
-    quantity: toNum(data.quantity),
-    targetQuantity: toNum(data.targetQuantity),
-    price: toNum(data.price),
-    amount: toNum(data.amount),
-    fee: toNum(data.fee),
+    quantity: round6(data.quantity),
+    targetQuantity: round6(data.targetQuantity),
+    price: round6(data.price),
+    amount: round2(data.amount),
+    fee: round2(data.fee),
     currency: textOrFallback(data.currency, state.meta.baseCurrency),
     tags: toTags(data.tags),
     note: data.note || ""
@@ -6236,7 +6354,7 @@ function onRecurringSubmit(event) {
     type: textOrFallback(data.type, "Operacja gotówkowa"),
     frequency: textOrFallback(data.frequency, "monthly"),
     startDate: data.startDate || todayIso(),
-    amount: toNum(data.amount),
+    amount: round2(data.amount),
     portfolioId,
     accountId,
     assetId,
@@ -6593,7 +6711,7 @@ function onLiabilitySubmit(event) {
   const editId = editingState.liabilityId && data.editId === editingState.liabilityId ? editingState.liabilityId : "";
   const payload = {
     name: textOrFallback(data.name, "Zobowiązanie"),
-    amount: toNum(data.amount),
+    amount: round2(data.amount),
     currency: textOrFallback(data.currency, state.meta.baseCurrency),
     rate: toNum(data.rate),
     dueDate: data.dueDate || ""
@@ -8496,12 +8614,16 @@ function computeMetrics(portfolioId, options = {}) {
 
     if (type.includes("sprzeda")) {
       const holding = ensureHolding(operation.assetId);
-      const avg = holding.qty > 0 ? holding.cost / holding.qty : 0;
-      const soldQty = qty;
-      const costOut = avg * soldQty;
-      const gross = soldQty * price || Math.abs(amount);
+      // Clamp cost/qty removal to what is actually held so an oversell can't drive qty/cost
+      // negative (which renders a phantom holding and sign-flips unrealizedPct). Cash proceeds
+      // still reflect the real transaction quantity.
+      const ownedQty = Math.max(0, holding.qty);
+      const reduceQty = Math.min(qty, ownedQty);
+      const avg = ownedQty > 0 ? holding.cost / ownedQty : 0;
+      const costOut = avg * reduceQty;
+      const gross = qty * price || Math.abs(amount);
       const netProceeds = (amount !== 0 ? amount : gross) - fee;
-      addHolding(operation.assetId, -soldQty, -costOut);
+      addHolding(operation.assetId, -reduceQty, -costOut);
       addCash(accountId, netProceeds, currency);
       addAccountStat(accountId, "sellGross", gross, currency);
       addAccountStat(accountId, "fees", fee, currency);
@@ -8528,7 +8650,9 @@ function computeMetrics(portfolioId, options = {}) {
       return;
     }
 
-    if (type.includes("dywid")) {
+    if (type.includes("dywid") || type.includes("odsetk") || type.includes("interest")) {
+      // Interest ("Odsetki") is income, not contributed capital — count it in P/L like dividends
+      // (matches the Kotlin offline engine), otherwise it silently inflated netContribution.
       addCash(accountId, amount, currency);
       dividends += toBase(amount, currency);
       return;
@@ -9780,11 +9904,13 @@ function importOperations(rows) {
 
     const date = normalizeDate(row.date || row.data || todayIso());
     const currency = textOrFallback(row.currency || row.waluta, state.meta.baseCurrency);
-    const quantity = toNum(row.quantity || row.ilosc);
-    const targetQuantity = toNum(row.targetQuantity || row.iloscDocelowa);
-    const price = toNum(row.price || row.cena);
-    const amount = toNum(row.amount || row.kwota);
-    const fee = toNum(row.fee || row.prowizja);
+    // Normalize precision at the import boundary too (manual entry already does via round2/round6),
+    // so CSV import doesn't persist raw float dust into state and the cloud.
+    const quantity = round6(row.quantity || row.ilosc);
+    const targetQuantity = round6(row.targetQuantity || row.iloscDocelowa);
+    const price = round6(row.price || row.cena);
+    const amount = round2(row.amount || row.kwota);
+    const fee = round2(row.fee || row.prowizja);
     const tags = toTags(row.tags || row.tagi);
     const note = row.note || row.notatka || "";
 
@@ -10471,6 +10597,26 @@ function toNum(value) {
     .replace(",", ".");
   const number = Number(normalized);
   return Number.isFinite(number) ? number : 0;
+}
+
+// Normalize precision at the persistence boundary so raw float input never enters state:
+// money (amounts/fees) to cents, prices/quantities to 6 dp — same convention as the offline
+// importer. Sign-aware half-away-from-zero rounding.
+function roundTo(value, places) {
+  const n = toNum(value);
+  if (!Number.isFinite(n)) {
+    return 0;
+  }
+  const factor = Math.pow(10, places);
+  return (Math.sign(n) * Math.round(Math.abs(n) * factor)) / factor;
+}
+
+function round2(value) {
+  return roundTo(value, 2);
+}
+
+function round6(value) {
+  return roundTo(value, 6);
 }
 
 function toTags(value) {

@@ -24,6 +24,7 @@ import java.io.FileNotFoundException
 class OfflineBackendServer(
     private val context: Context,
     private val repository: OfflineRepository,
+    private val authToken: String = "",
     private val port: Int = DEFAULT_PORT
 ) {
     private var server: ApplicationEngine? = null
@@ -35,6 +36,9 @@ class OfflineBackendServer(
         if (server != null) {
             return
         }
+        // Fail closed: an empty token would disable the /api/* auth gate (isNotEmpty check below),
+        // leaving the full portfolio open to any app on the device. Refuse to start instead.
+        require(authToken.isNotEmpty()) { "OfflineBackendServer requires a non-empty auth token" }
         server = embeddedServer(
             factory = CIO,
             host = "127.0.0.1",
@@ -85,6 +89,17 @@ class OfflineBackendServer(
     }
 
     private suspend fun processApiRequest(call: ApplicationCall) {
+        // Local API exposes the full portfolio. Bind is 127.0.0.1, but every other app on the
+        // device can still reach loopback, so gate /api/* behind a per-launch token delivered
+        // in-process (JS bridge), never over HTTP. Static UI assets stay open (not secret).
+        if (authToken.isNotEmpty() && call.request.headers["X-Offline-Token"] != authToken) {
+            call.respondText(
+                text = "{\"error\":\"Unauthorized\"}",
+                contentType = ContentType.Application.Json,
+                status = HttpStatusCode.Unauthorized
+            )
+            return
+        }
         val pathSegments = call.parameters.getAll("apiPath") ?: emptyList()
         val apiPath = "/" + pathSegments.joinToString("/")
         val method = call.request.httpMethod.value
