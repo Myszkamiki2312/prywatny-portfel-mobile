@@ -1,5 +1,6 @@
 package pl.prywatnyportfel.mobile.offline
 
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
@@ -16,20 +17,88 @@ object QuoteFetcher {
     private const val CONNECT_TIMEOUT_MS = 4000
     private const val READ_TIMEOUT_MS = 4000
 
-    fun fetch(ticker: String): QuoteFetchResult? {
+    // Yahoo v8 chart endpoint with a browser User-Agent is the reliable free quote source (the v7
+    // quote endpoint is blocked/429). Try the currency-matched exchange first to avoid ticker
+    // collisions (e.g. a PLN "DNP" is Dino Polska on GPW -> DNP.WA, not the US-listed DNP fund).
+    private val EXCHANGE_SUFFIXES = listOf(".WA", ".DE", ".L", ".PA", ".MI", ".AS", ".SW", ".US")
+    private val SUFFIX_FOR_CURRENCY = mapOf("PLN" to ".WA", "GBP" to ".L", "GBX" to ".L", "CHF" to ".SW")
+
+    fun fetch(ticker: String, currency: String? = null): QuoteFetchResult? {
         val cleanTicker = ticker.trim().uppercase()
         if (cleanTicker.isBlank()) {
             return null
         }
-
-        val candidates = candidateSymbols(cleanTicker)
-        for (symbol in candidates) {
+        for (symbol in yahooCandidates(cleanTicker, currency)) {
+            val result = fetchFromYahoo(cleanTicker, symbol)
+            if (result != null) {
+                return result
+            }
+        }
+        // Fallback: Stooq CSV (works well from a phone's residential IP).
+        for (symbol in candidateSymbols(cleanTicker)) {
             val result = fetchFromStooq(cleanTicker, symbol)
             if (result != null) {
                 return result
             }
         }
         return null
+    }
+
+    private fun yahooCandidates(ticker: String, currency: String?): List<String> {
+        if (ticker.contains('.')) {
+            return listOf(ticker)
+        }
+        val preferred = SUFFIX_FOR_CURRENCY[currency?.trim()?.uppercase()]
+        return if (preferred != null) {
+            listOf(ticker + preferred, ticker) + EXCHANGE_SUFFIXES.filter { it != preferred }.map { ticker + it }
+        } else {
+            listOf(ticker) + EXCHANGE_SUFFIXES.map { ticker + it }
+        }
+    }
+
+    private fun fetchFromYahoo(originalTicker: String, symbol: String): QuoteFetchResult? {
+        return try {
+            val encoded = URLEncoder.encode(symbol, StandardCharsets.UTF_8.name())
+            val url = URL("https://query1.finance.yahoo.com/v8/finance/chart/$encoded?interval=1d&range=2d")
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Accept", "application/json")
+            }
+            val content = try {
+                if (connection.responseCode !in 200..299) {
+                    connection.errorStream?.use { it.readBytes() }
+                    return null
+                }
+                connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } finally {
+                connection.disconnect()
+            }
+            val meta = JSONObject(content)
+                .optJSONObject("chart")
+                ?.optJSONArray("result")
+                ?.optJSONObject(0)
+                ?.optJSONObject("meta")
+                ?: return null
+            val price = meta.optDouble("regularMarketPrice", 0.0)
+            if (price <= 0.0) {
+                return null
+            }
+            val currency = meta.optString("currency", "").ifBlank {
+                if (symbol.endsWith(".WA", ignoreCase = true)) "PLN" else "USD"
+            }
+            QuoteFetchResult(
+                ticker = originalTicker,
+                price = price,
+                currency = currency.uppercase(),
+                provider = "yahoo"
+            )
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun fetchFromStooq(originalTicker: String, stooqSymbol: String): QuoteFetchResult? {

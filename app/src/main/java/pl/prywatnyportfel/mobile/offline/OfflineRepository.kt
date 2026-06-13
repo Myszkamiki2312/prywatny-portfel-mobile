@@ -409,7 +409,7 @@ class OfflineRepository(private val context: Context) {
                     gate.withPermit {
                     val asset = availableByTicker[ticker]
                     val cachedPrice = asset?.optDouble("currentPrice", 0.0) ?: 0.0
-                    val quote = QuoteFetcher.fetch(ticker)
+                    val quote = QuoteFetcher.fetch(ticker, asset?.optString("currency"))
                     val price = when {
                         quote != null && quote.price > 0.0 -> quote.price
                         cachedPrice > 0.0 -> cachedPrice
