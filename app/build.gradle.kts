@@ -5,8 +5,8 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val defaultVersionName = "1.2.27"
-val defaultVersionCode = 10227
+val defaultVersionName = "1.2.28"
+val defaultVersionCode = 10228
 val appVersionName = providers.gradleProperty("appVersionName")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
     .orElse(defaultVersionName)
@@ -125,6 +125,7 @@ val syncWebAssets by tasks.registering(Copy::class) {
     from(webSourceRoot) {
         include("index.html")
         include("styles.css")
+        include("styles-xtb.css")
         include("app.js")
         include("supabase-config.js")
         include("frontend/**")

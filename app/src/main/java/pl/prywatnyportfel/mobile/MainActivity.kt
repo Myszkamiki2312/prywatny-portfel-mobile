@@ -52,6 +52,7 @@ class MainActivity : AppCompatActivity() {
         offlineServer.start()
 
         configureWebView()
+        clearWebCacheOnVersionChange()
 
         swipeRefresh.setOnRefreshListener {
             webView.reload()
@@ -148,6 +149,23 @@ class MainActivity : AppCompatActivity() {
                     false
                 }
             }
+        }
+    }
+
+    // Bundled web assets (HTML/CSS/JS) change between app versions, but the WebView caches the
+    // localhost responses. Clear the cache once per version bump so an updated UI (e.g. a restyle)
+    // shows immediately after an app update instead of serving the stale cached copy.
+    private fun clearWebCacheOnVersionChange() {
+        val prefs = getSharedPreferences("app_meta", MODE_PRIVATE)
+        val current = try {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).versionCode.toLong()
+        } catch (_: Exception) {
+            0L
+        }
+        if (prefs.getLong("last_web_cache_version", -1L) != current) {
+            webView.clearCache(true)
+            prefs.edit().putLong("last_web_cache_version", current).apply()
         }
     }
 
