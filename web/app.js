@@ -1186,6 +1186,7 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
     if (!CLOUD_ONLY_DATA) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
+    await persistStateToBackend();
     invalidateDashboardHistoryCache();
     cloudSyncConfig.lastPullAt = nowIso();
     cloudSyncConfig.lastError = "";
@@ -2351,6 +2352,12 @@ async function hydrateFromBackend() {
     if (!CLOUD_ONLY_DATA && payload && payload.state) {
       state = normalizeState(payload.state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } else if (CLOUD_ONLY_DATA) {
+      await apiRequest("/state", {
+        method: "PUT",
+        body: { state },
+        timeoutMs: 10000
+      });
     }
     backendSync.available = true;
     await hydrateReportCatalog();
@@ -2491,11 +2498,12 @@ async function onRefreshQuotes() {
       body: { tickers: requestTickers, currencies: assetCurrencyMap() }
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
-    applyQuotes(quotes);
+    const updatedAssets = applyQuotes(quotes);
     applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
+    await persistStateToBackend();
     saveState({ skipBackend: true });
     renderAll();
-    const freshCount = quotes.filter((quote) => !quote.stale && !normalizeFxPairKey(quote && quote.ticker)).length;
+    const freshCount = updatedAssets;
     const staleCount = quotes.filter((quote) => quote && quote.stale).length;
     showToast(
       `Zaktualizowano: ${freshCount} walorów${staleCount ? `, pominięto nieświeże: ${staleCount}` : ""}${
@@ -2565,7 +2573,8 @@ async function refreshQuotesAndFxSilently() {
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
     applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
-    saveState({ preserveHistoryCache: true });
+    await persistStateToBackend();
+    saveState({ preserveHistoryCache: true, skipBackend: true });
     renderAll();
   } catch (error) {
     // Silent fallback. The manual refresh button still remains available.
@@ -2621,24 +2630,30 @@ async function onBrokerCsvImport(event) {
 
 function applyQuotes(quotes) {
   if (!Array.isArray(quotes) || !quotes.length) {
-    return;
+    return 0;
   }
-  const quoteByTicker = {};
-  quotes.forEach((row) => {
+  const quoteRows = quotes.map((row) => {
     const ticker = String(row.ticker || "").trim().toUpperCase();
     const price = toNum(row.price);
     if (!ticker || normalizeFxPairKey(ticker) || price <= 0 || row.stale) {
-      return;
+      return null;
     }
-    quoteTickerAliases(ticker, row.currency).forEach((alias) => {
-      if (!quoteByTicker[alias]) {
-        quoteByTicker[alias] = row;
-      }
-    });
+    return { ...row, ticker, currency: normalizeCurrency(row.currency, "") };
+  }).filter(Boolean);
+  const exactQuoteByTicker = {};
+  quoteRows.forEach((row) => {
+    if (!exactQuoteByTicker[row.ticker]) {
+      exactQuoteByTicker[row.ticker] = row;
+    }
   });
+  let updatedAssets = 0;
   state.assets.forEach((asset) => {
     const assetTicker = String(asset.ticker || "").trim().toUpperCase();
-    const quote = quoteTickerAliases(assetTicker, asset.currency).map((alias) => quoteByTicker[alias]).find(Boolean);
+    const expectedCurrency = normalizeCurrency(asset.currency || asset.quoteCurrency, state.meta.baseCurrency);
+    const aliases = quoteTickerAliases(assetTicker, expectedCurrency).filter((alias) => alias !== assetTicker);
+    const quote =
+      exactQuoteByTicker[assetTicker] ||
+      quoteRows.find((row) => aliases.includes(row.ticker) && normalizeCurrency(row.currency, "") === expectedCurrency);
     if (!quote) {
       return;
     }
@@ -2650,9 +2665,11 @@ function applyQuotes(quotes) {
     if (!asset.currency) {
       asset.currency = asset.quoteCurrency;
     }
+    updatedAssets += 1;
   });
   state.meta.lastQuotesRefreshAt = nowIso();
-  state.meta.lastQuotesCount = Object.keys(quoteByTicker).length;
+  state.meta.lastQuotesCount = updatedAssets;
+  return updatedAssets;
 }
 
 function assetCurrencyMap() {
@@ -2701,9 +2718,9 @@ function quoteTickerAliases(ticker, currencyHint = "") {
   } else if (currency === "PLN") {
     add(`${normalized}.WA`);
     add(`${normalized}.PL`);
-    add(`${normalized}.US`);
   } else if (currency === "EUR") {
     add(`${normalized}.DE`);
+  } else if (currency === "USD") {
     add(`${normalized}.US`);
   } else {
     add(`${normalized}.US`);
@@ -2721,6 +2738,17 @@ function applyFxRates(rates) {
     state.meta.lastFxRefreshAt = nowIso();
     state.meta.lastFxCount = nextCount;
   }
+}
+
+async function persistStateToBackend() {
+  if (!backendSync.available) {
+    return;
+  }
+  await apiRequest("/state", {
+    method: "PUT",
+    body: { state },
+    timeoutMs: 10000
+  });
 }
 
 function formatFreshnessAgeLabel(ageSeconds) {
@@ -5342,9 +5370,14 @@ async function reportClientError(entry) {
     return;
   }
   try {
+    const headers = { "Content-Type": "application/json" };
+    const offlineToken = offlineApiToken();
+    if (offlineToken) {
+      headers["X-Offline-Token"] = offlineToken;
+    }
     await fetch(`${API_BASE}/tools/errors/log`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload)
     });
   } catch (error) {
@@ -8531,6 +8564,9 @@ function extractFxRatesFromQuotes(quotes) {
     return output;
   }
   quotes.forEach((row) => {
+    if (row && row.stale) {
+      return;
+    }
     const pairKey = normalizeFxPairKey(row && row.ticker);
     const price = toNum(row && row.price);
     if (pairKey && price > 0) {
@@ -8544,6 +8580,7 @@ function relevantCurrenciesForState() {
   const currencies = new Set([normalizeCurrency(state.meta.baseCurrency, "PLN")]);
   state.assets.forEach((asset) => {
     currencies.add(normalizeCurrency(asset.currency, state.meta.baseCurrency));
+    currencies.add(normalizeCurrency(asset.quoteCurrency, state.meta.baseCurrency));
   });
   state.accounts.forEach((account) => {
     currencies.add(normalizeCurrency(account.currency, state.meta.baseCurrency));
@@ -8786,8 +8823,9 @@ function computeMetrics(portfolioId, options = {}) {
     const currentPrice = useCurrentPrices ? toNum(asset ? asset.currentPrice : fallbackPrice) : fallbackPrice;
     const price = currentPrice || fallbackPrice || 0;
     const assetCurrency = normalizeCurrency(asset ? asset.currency : baseCurrency, baseCurrency);
+    const priceCurrency = asset ? normalizeCurrency(asset.quoteCurrency, assetCurrency) : assetCurrency;
     const nativeValue = holding.qty * price;
-    const value = toBase(nativeValue, assetCurrency);
+    const value = toBase(nativeValue, priceCurrency);
     const unrealized = value - holding.cost;
     bookValue += holding.cost;
     marketValue += value;
@@ -8796,7 +8834,7 @@ function computeMetrics(portfolioId, options = {}) {
       ticker: asset ? asset.ticker : "N/A",
       name: asset ? asset.name : "Usunięty walor",
       type: asset ? asset.type : "Inny",
-      currency: assetCurrency,
+      currency: priceCurrency,
       risk: asset ? asset.risk : 5,
       sector: asset ? asset.sector : "",
       industry: asset ? asset.industry : "",

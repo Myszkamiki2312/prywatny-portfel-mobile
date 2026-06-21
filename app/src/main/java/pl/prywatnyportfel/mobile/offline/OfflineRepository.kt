@@ -453,7 +453,14 @@ class OfflineRepository(private val context: Context) {
         val rates = JSONObject()
         for (index in 0 until quotes.length()) {
             val row = quotes.optJSONObject(index) ?: continue
-            val pairKey = normalizeFxPairKey(row.optString("ticker", ""))
+            if (row.optBoolean("stale", false)) {
+                continue
+            }
+            val ticker = row.optString("ticker", "")
+            if (!isExplicitFxTicker(ticker)) {
+                continue
+            }
+            val pairKey = normalizeFxPairKey(ticker)
             val price = num(row.opt("price"))
             if (pairKey.isNotBlank() && price > 0.0) {
                 rates.put(pairKey, price)
@@ -710,15 +717,16 @@ class OfflineRepository(private val context: Context) {
             val fallbackPrice = lastPriceByAsset[assetId] ?: 0.0
             val currentPrice = if (assetPrice > 0.0) assetPrice else fallbackPrice
             val assetCurrency = normalizeCurrency(asset.optString("currency", ""), baseCurrency)
+            val priceCurrency = normalizeCurrency(asset.optString("quoteCurrency", ""), assetCurrency)
             val costValue = (costByAsset[assetId] ?: 0.0).coerceAtLeast(0.0) // base currency
-            // Price is in the asset's currency; convert the position value to base. Cost is already base.
-            val value = toBaseAmount(quantity * currentPrice, assetCurrency, baseCurrency, fxRates)
+            // Current price comes from market feed currency; cost basis stays converted from operations.
+            val value = toBaseAmount(quantity * currentPrice, priceCurrency, baseCurrency, fxRates)
             val unrealized = value - costValue
             holdings += HoldingRow(
                 assetId = assetId,
                 ticker = asset.optString("ticker", ""),
                 name = asset.optString("name", ""),
-                currency = assetCurrency,
+                currency = priceCurrency,
                 risk = num(asset.opt("risk")).coerceIn(1.0, 10.0),
                 sector = asset.optString("sector", ""),
                 quantity = round6(quantity),
@@ -881,7 +889,8 @@ class OfflineRepository(private val context: Context) {
                 num(asset.opt("currentPrice"))
             }
             val assetCurrency = normalizeCurrency(asset.optString("currency", ""), baseCurrency)
-            val price = toBaseAmount(nativePrice, assetCurrency, baseCurrency, fxRates)
+            val priceCurrency = normalizeCurrency(asset.optString("quoteCurrency", ""), assetCurrency)
+            val price = toBaseAmount(nativePrice, priceCurrency, baseCurrency, fxRates)
             val risk = num(asset.opt("risk")).coerceIn(1.0, 10.0)
             val share = holding?.sharePct ?: 0.0
             val unrealizedPct = holding?.unrealizedPct ?: 0.0
@@ -2269,6 +2278,11 @@ class OfflineRepository(private val context: Context) {
             if (a != b) return "$a/$b"
         }
         return ""
+    }
+
+    private fun isExplicitFxTicker(value: String): Boolean {
+        val text = value.uppercase().trim()
+        return text.startsWith("FX:") || "/" in text || text.endsWith("=X")
     }
 
     private fun parseFxRates(meta: JSONObject?): Map<String, Double> {

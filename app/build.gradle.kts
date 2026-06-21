@@ -5,8 +5,8 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val defaultVersionName = "1.2.28"
-val defaultVersionCode = 10228
+val defaultVersionName = "1.2.30"
+val defaultVersionCode = 10230
 val appVersionName = providers.gradleProperty("appVersionName")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
     .orElse(defaultVersionName)

@@ -30,7 +30,7 @@ object QuoteFetcher {
         if (cleanTicker.isBlank()) {
             return null
         }
-        normalizeFxPairKey(cleanTicker).takeIf { it.isNotBlank() }?.let { pairKey ->
+        if (isExplicitFxTicker(cleanTicker)) normalizeFxPairKey(cleanTicker).takeIf { it.isNotBlank() }?.let { pairKey ->
             fetchFx(cleanTicker, pairKey)?.let { return it }
         }
         for (symbol in yahooCandidates(cleanTicker, currency)) {
@@ -172,17 +172,21 @@ object QuoteFetcher {
                 ?.optJSONObject(0)
                 ?.optJSONObject("meta")
                 ?: return null
-            val price = meta.optDouble("regularMarketPrice", 0.0)
-            if (price <= 0.0) {
+            val rawPrice = meta.optDouble("regularMarketPrice", 0.0)
+            if (rawPrice <= 0.0) {
                 return null
             }
-            val currency = meta.optString("currency", "").ifBlank {
+            val rawCurrency = meta.optString("currency", "").ifBlank {
                 if (symbol.endsWith(".WA", ignoreCase = true)) "PLN" else "USD"
-            }
+            }.uppercase()
+            val isLsePence = symbol.endsWith(".L", ignoreCase = true)
+            val isPenceQuote = isLsePence || rawCurrency == "GBX"
+            val price = if (isPenceQuote) rawPrice / 100.0 else rawPrice
+            val currency = if (isLsePence || rawCurrency == "GBX" || rawCurrency == "GBP") "GBP" else rawCurrency
             QuoteFetchResult(
                 ticker = originalTicker,
                 price = price,
-                currency = currency.uppercase(),
+                currency = currency,
                 provider = "yahoo"
             )
         } catch (_: Exception) {
@@ -220,11 +224,12 @@ object QuoteFetcher {
             if (row.size < 7) {
                 return null
             }
-            val close = row[6].trim().replace(',', '.').toDoubleOrNull() ?: return null
-            if (close <= 0.0) {
+            val rawClose = row[6].trim().replace(',', '.').toDoubleOrNull() ?: return null
+            if (rawClose <= 0.0) {
                 return null
             }
             val currency = guessCurrencyFromSymbol(stooqSymbol)
+            val close = if (stooqSymbol.endsWith(".L", ignoreCase = true)) rawClose / 100.0 else rawClose
             QuoteFetchResult(
                 ticker = originalTicker,
                 price = close,
@@ -289,5 +294,10 @@ object QuoteFetcher {
             if (base != quote) return "$base/$quote"
         }
         return ""
+    }
+
+    private fun isExplicitFxTicker(value: String): Boolean {
+        val text = value.uppercase().trim()
+        return text.startsWith("FX:") || "/" in text || text.endsWith("=X")
     }
 }
