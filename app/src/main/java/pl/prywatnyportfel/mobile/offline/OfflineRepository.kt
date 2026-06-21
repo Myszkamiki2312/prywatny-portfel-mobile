@@ -162,8 +162,26 @@ class OfflineRepository(private val context: Context) {
                     for (index in 0 until tickersArray.length()) {
                         requestedTickers += tickersArray.optString(index, "").uppercase().trim()
                     }
-                    val refreshed = refreshQuotes(requestedTickers.filter { it.isNotBlank() })
-                    ok(JSONObject().put("quotes", refreshed))
+                    val currencyHints = mutableMapOf<String, String>()
+                    payload.optJSONObject("currencies")?.let { raw ->
+                        val keys = raw.keys()
+                        while (keys.hasNext()) {
+                            val rawTicker = keys.next()
+                            val ticker = rawTicker.uppercase().trim()
+                            val currency = normalizeCurrency(raw.optString(rawTicker, ""), "")
+                            if (ticker.isNotBlank() && currency.isNotBlank()) {
+                                currencyHints[ticker] = currency
+                            }
+                        }
+                    }
+                    val refreshed = refreshQuotes(requestedTickers.filter { it.isNotBlank() }, currencyHints)
+                    val fxRates = extractFxRatesFromQuotes(refreshed)
+                    ok(
+                        JSONObject()
+                            .put("quotes", refreshed)
+                            .put("fxRates", fxRates)
+                            .put("fxUpdated", fxRates.length())
+                    )
                 }
 
                 method == "GET" && path == "/tools/realtime/status" -> ok(realtimeStatusObject())
@@ -381,7 +399,7 @@ class OfflineRepository(private val context: Context) {
         return json
     }
 
-    private suspend fun refreshQuotes(requestedTickers: List<String>): JSONArray {
+    private suspend fun refreshQuotes(requestedTickers: List<String>, currencyHints: Map<String, String> = emptyMap()): JSONArray {
         val state = JSONObject(ensureStateJson())
         val assets = state.optJSONArray("assets") ?: JSONArray()
         val availableByTicker = HashMap<String, JSONObject>()
@@ -394,7 +412,7 @@ class OfflineRepository(private val context: Context) {
         }
 
         val targetTickers = if (requestedTickers.isNotEmpty()) {
-            requestedTickers
+            requestedTickers.distinct()
         } else {
             availableByTicker.keys.toList()
         }
@@ -407,34 +425,41 @@ class OfflineRepository(private val context: Context) {
             targetTickers.map { ticker ->
                 async(Dispatchers.IO) {
                     gate.withPermit {
-                    val asset = availableByTicker[ticker]
-                    val cachedPrice = asset?.optDouble("currentPrice", 0.0) ?: 0.0
-                    val quote = QuoteFetcher.fetch(ticker, asset?.optString("currency"))
-                    val price = when {
-                        quote != null && quote.price > 0.0 -> quote.price
-                        cachedPrice > 0.0 -> cachedPrice
-                        else -> 0.0
-                    }
-                    val currency = when {
-                        quote != null -> quote.currency
-                        asset != null -> asset.optString("currency", "PLN")
-                        else -> "PLN"
-                    }
-                    QuoteEntity(
-                        ticker = ticker,
-                        price = round2(price),
-                        currency = currency,
-                        provider = quote?.provider ?: if (price > 0) "offline-asset" else "offline",
-                        fetchedAt = nowIso()
-                    )
+                        val asset = availableByTicker[ticker]
+                        val hint = currencyHints[ticker] ?: asset?.optString("currency")
+                        val quote = QuoteFetcher.fetch(ticker, hint)
+                        if (quote != null && quote.price > 0.0) {
+                            QuoteEntity(
+                                ticker = ticker,
+                                price = round6(quote.price),
+                                currency = quote.currency,
+                                provider = quote.provider,
+                                fetchedAt = nowIso()
+                            )
+                        } else {
+                            null
+                        }
                     }
                 }
-            }.awaitAll()
+            }.awaitAll().filterNotNull()
         }
         if (rows.isNotEmpty()) {
             dao.upsertQuotes(rows)
         }
         return listQuotes(targetTickers)
+    }
+
+    private fun extractFxRatesFromQuotes(quotes: JSONArray): JSONObject {
+        val rates = JSONObject()
+        for (index in 0 until quotes.length()) {
+            val row = quotes.optJSONObject(index) ?: continue
+            val pairKey = normalizeFxPairKey(row.optString("ticker", ""))
+            val price = num(row.opt("price"))
+            if (pairKey.isNotBlank() && price > 0.0) {
+                rates.put(pairKey, price)
+            }
+        }
+        return rates
     }
 
     private suspend fun ensureStateJson(): String {

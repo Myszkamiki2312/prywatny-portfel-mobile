@@ -2475,11 +2475,12 @@ async function onRefreshQuotes() {
     showToast("Odświeżanie działa po uruchomieniu lokalnego backendu.", "error");
     return;
   }
-  const tickers = state.assets.map((asset) => asset.ticker).filter(Boolean);
+  const tickers = state.assets.map((asset) => String(asset.ticker || "").trim()).filter(Boolean);
   if (!tickers.length) {
     showToast("Dodaj najpierw walor, żeby było co odświeżyć.", "info");
     return;
   }
+  const requestTickers = uniqueTickers(tickers.concat(requiredFxQuoteTickers()));
   backendSync.pushInFlight = true;
   setRefreshState("Odświeżam…", true);
   showToast("Odświeżam notowania i kursy FX…", "info");
@@ -2487,16 +2488,20 @@ async function onRefreshQuotes() {
   try {
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers }
+      body: { tickers: requestTickers, currencies: assetCurrencyMap() }
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
     applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
     saveState({ skipBackend: true });
     renderAll();
+    const freshCount = quotes.filter((quote) => !quote.stale && !normalizeFxPairKey(quote && quote.ticker)).length;
+    const staleCount = quotes.filter((quote) => quote && quote.stale).length;
     showToast(
-      `Zaktualizowano: ${quotes.length} walorów${payload.fxUpdated ? `, FX: ${payload.fxUpdated}` : ""}.`,
-      "info"
+      `Zaktualizowano: ${freshCount} walorów${staleCount ? `, pominięto nieświeże: ${staleCount}` : ""}${
+        payload.fxUpdated ? `, FX: ${payload.fxUpdated}` : ""
+      }.`,
+      staleCount ? "info" : "success"
     );
   } catch (error) {
     backendSync.available = false;
@@ -2507,6 +2512,16 @@ async function onRefreshQuotes() {
     setRefreshState(originalLabel || "Odśwież", false);
     updateBackendStatus();
   }
+}
+
+function uniqueTickers(tickers) {
+  return Array.from(
+    new Set(
+      tickers
+        .map((ticker) => String(ticker || "").trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function scheduleFxRefresh() {
@@ -2544,7 +2559,7 @@ async function refreshQuotesAndFxSilently() {
     });
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers },
+      body: { tickers: uniqueTickers(tickers.concat(fxTickers)), currencies: assetCurrencyMap() },
       timeoutMs: 10000
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
@@ -2610,14 +2625,20 @@ function applyQuotes(quotes) {
   }
   const quoteByTicker = {};
   quotes.forEach((row) => {
-    const ticker = String(row.ticker || "").toUpperCase();
-    if (!ticker || normalizeFxPairKey(ticker)) {
+    const ticker = String(row.ticker || "").trim().toUpperCase();
+    const price = toNum(row.price);
+    if (!ticker || normalizeFxPairKey(ticker) || price <= 0 || row.stale) {
       return;
     }
-    quoteByTicker[ticker] = row;
+    quoteTickerAliases(ticker, row.currency).forEach((alias) => {
+      if (!quoteByTicker[alias]) {
+        quoteByTicker[alias] = row;
+      }
+    });
   });
   state.assets.forEach((asset) => {
-    const quote = quoteByTicker[String(asset.ticker || "").toUpperCase()];
+    const assetTicker = String(asset.ticker || "").trim().toUpperCase();
+    const quote = quoteTickerAliases(assetTicker, asset.currency).map((alias) => quoteByTicker[alias]).find(Boolean);
     if (!quote) {
       return;
     }
@@ -2632,6 +2653,64 @@ function applyQuotes(quotes) {
   });
   state.meta.lastQuotesRefreshAt = nowIso();
   state.meta.lastQuotesCount = Object.keys(quoteByTicker).length;
+}
+
+function assetCurrencyMap() {
+  const output = {};
+  state.assets.forEach((asset) => {
+    const ticker = String(asset.ticker || "").trim().toUpperCase();
+    const currency = normalizeCurrency(asset.currency || asset.quoteCurrency, "");
+    if (ticker && currency) {
+      output[ticker] = currency;
+    }
+  });
+  return output;
+}
+
+function quoteTickerAliases(ticker, currencyHint = "") {
+  const normalized = String(ticker || "").trim().toUpperCase();
+  if (!normalized) {
+    return [];
+  }
+  const aliases = [normalized];
+  const currency = normalizeCurrency(currencyHint, "");
+  const add = (value) => {
+    const text = String(value || "").trim().toUpperCase();
+    if (text && !aliases.includes(text)) {
+      aliases.push(text);
+    }
+  };
+  if (normalized === "ORLEN") {
+    add("PKN");
+    add("PKN.WA");
+  }
+  if (normalized === "PKN") {
+    add("ORLEN");
+  }
+  if (normalized.includes(".")) {
+    const [root, suffix] = normalized.split(".", 2);
+    if ((suffix === "PL" || suffix === "WA") && root) {
+      add(root);
+      add(`${root}.PL`);
+      add(`${root}.WA`);
+    } else if (suffix === "US" && root) {
+      add(root);
+    } else if (suffix === "DE" && root) {
+      add(root);
+    }
+  } else if (currency === "PLN") {
+    add(`${normalized}.WA`);
+    add(`${normalized}.PL`);
+    add(`${normalized}.US`);
+  } else if (currency === "EUR") {
+    add(`${normalized}.DE`);
+    add(`${normalized}.US`);
+  } else {
+    add(`${normalized}.US`);
+    add(`${normalized}.PL`);
+    add(`${normalized}.WA`);
+  }
+  return aliases;
 }
 
 function applyFxRates(rates) {
