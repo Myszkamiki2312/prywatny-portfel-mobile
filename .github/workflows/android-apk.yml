@@ -32,9 +32,13 @@ jobs:
         id: version
         run: |
           REF_NAME="${GITHUB_REF_NAME}"
-          VERSION_NAME="1.2.21"
+          VERSION_NAME=$(grep -E '^val defaultVersionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
+          VARIANT="Debug"
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
           if [[ "${REF_NAME}" == android-v* ]]; then
             VERSION_NAME="${REF_NAME#android-v}"
+            VARIANT="Release"
+            APK_PATH="app/build/outputs/apk/release/app-release.apk"
           fi
           BASE_SEMVER="${VERSION_NAME%%-*}"
           VERSION_NAME="${BASE_SEMVER}"
@@ -48,18 +52,33 @@ jobs:
           fi
           echo "name=${VERSION_NAME}" >> "${GITHUB_OUTPUT}"
           echo "code=${VERSION_CODE}" >> "${GITHUB_OUTPUT}"
+          echo "variant=${VARIANT}" >> "${GITHUB_OUTPUT}"
+          echo "apk_path=${APK_PATH}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build debug APK
+      - name: Build APK
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon \
+          if [[ "${{ steps.version.outputs.variant }}" == "Release" ]]; then
+            if [[ -z "${RELEASE_KEYSTORE_BASE64}" || -z "${RELEASE_STORE_PASSWORD}" || -z "${RELEASE_KEY_ALIAS}" || -z "${RELEASE_KEY_PASSWORD}" ]]; then
+              echo "Release tags require RELEASE_KEYSTORE_BASE64, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD secrets." >&2
+              exit 1
+            fi
+            echo "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > release.keystore
+            export RELEASE_STORE_FILE="${PWD}/release.keystore"
+          fi
+          ./gradlew assemble${{ steps.version.outputs.variant }} --no-daemon \
             -PappVersionName="${{ steps.version.outputs.name }}" \
             -PappVersionCode="${{ steps.version.outputs.code }}"
 
       - name: Prepare artifact
         run: |
           mkdir -p build-artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk build-artifacts/prywatny-portfel-mobile.apk
+          cp "${{ steps.version.outputs.apk_path }}" build-artifacts/prywatny-portfel-mobile.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

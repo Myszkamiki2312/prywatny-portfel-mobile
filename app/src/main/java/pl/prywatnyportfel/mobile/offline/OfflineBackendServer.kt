@@ -20,17 +20,22 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import java.io.FileNotFoundException
+import java.net.BindException
 
 class OfflineBackendServer(
     private val context: Context,
     private val repository: OfflineRepository,
     private val authToken: String = "",
-    private val port: Int = DEFAULT_PORT
+    private val preferredPort: Int = DEFAULT_PORT
 ) {
     private var server: ApplicationEngine? = null
+    private var boundPort: Int = preferredPort
 
     val baseUrl: String
-        get() = "http://127.0.0.1:$port"
+        get() = "http://127.0.0.1:$boundPort"
+
+    val port: Int
+        get() = boundPort
 
     fun start() {
         if (server != null) {
@@ -39,42 +44,53 @@ class OfflineBackendServer(
         // Fail closed: an empty token would disable the /api/* auth gate (isNotEmpty check below),
         // leaving the full portfolio open to any app on the device. Refuse to start instead.
         require(authToken.isNotEmpty()) { "OfflineBackendServer requires a non-empty auth token" }
-        server = embeddedServer(
-            factory = CIO,
-            host = "127.0.0.1",
-            port = port
-        ) {
-            routing {
-                get("/api/{apiPath...}") { processApiRequest(call) }
-                post("/api/{apiPath...}") { processApiRequest(call) }
-                put("/api/{apiPath...}") { processApiRequest(call) }
-                delete("/api/{apiPath...}") { processApiRequest(call) }
-                options("/api/{apiPath...}") { processApiRequest(call) }
+        var lastBindError: BindException? = null
+        for (candidatePort in candidatePorts()) {
+            try {
+                val engine = embeddedServer(
+                    factory = CIO,
+                    host = "127.0.0.1",
+                    port = candidatePort
+                ) {
+                    routing {
+                        get("/api/{apiPath...}") { processApiRequest(call) }
+                        post("/api/{apiPath...}") { processApiRequest(call) }
+                        put("/api/{apiPath...}") { processApiRequest(call) }
+                        delete("/api/{apiPath...}") { processApiRequest(call) }
+                        options("/api/{apiPath...}") { processApiRequest(call) }
 
-                get("/") {
-                    try {
-                        call.serveAsset("index.html")
-                    } catch (_: java.io.IOException) {
-                        call.respondText("Not found", status = HttpStatusCode.NotFound)
-                    }
-                }
+                        get("/") {
+                            try {
+                                call.serveAsset("index.html")
+                            } catch (_: java.io.IOException) {
+                                call.respondText("Not found", status = HttpStatusCode.NotFound)
+                            }
+                        }
 
-                get("/{path...}") {
-                    val parts = call.parameters.getAll("path") ?: emptyList()
-                    val rawPath = parts.joinToString("/")
-                    val normalizedPath = if (rawPath.isBlank()) "index.html" else rawPath
-                    if (normalizedPath.contains("..") || normalizedPath.startsWith("api/")) {
-                        call.respondText("Not found", status = HttpStatusCode.NotFound)
-                        return@get
+                        get("/{path...}") {
+                            val parts = call.parameters.getAll("path") ?: emptyList()
+                            val rawPath = parts.joinToString("/")
+                            val normalizedPath = if (rawPath.isBlank()) "index.html" else rawPath
+                            if (normalizedPath.contains("..") || normalizedPath.startsWith("api/")) {
+                                call.respondText("Not found", status = HttpStatusCode.NotFound)
+                                return@get
+                            }
+                            try {
+                                call.serveAsset(normalizedPath)
+                            } catch (_: FileNotFoundException) {
+                                call.respondText("Not found", status = HttpStatusCode.NotFound)
+                            }
+                        }
                     }
-                    try {
-                        call.serveAsset(normalizedPath)
-                    } catch (_: FileNotFoundException) {
-                        call.respondText("Not found", status = HttpStatusCode.NotFound)
-                    }
-                }
+                }.start(wait = false)
+                boundPort = candidatePort
+                server = engine
+                return
+            } catch (error: BindException) {
+                lastBindError = error
             }
-        }.start(wait = false)
+        }
+        throw IllegalStateException("Unable to bind offline backend on localhost", lastBindError)
     }
 
     fun stop() {
@@ -128,6 +144,10 @@ class OfflineBackendServer(
             path.endsWith(".jpg", ignoreCase = true) || path.endsWith(".jpeg", ignoreCase = true) -> ContentType.Image.JPEG
             else -> ContentType.Application.OctetStream
         }
+    }
+
+    private fun candidatePorts(): List<Int> {
+        return (0..20).map { preferredPort + it }
     }
 
     companion object {

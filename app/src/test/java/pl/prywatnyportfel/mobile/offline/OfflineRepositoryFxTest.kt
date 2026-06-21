@@ -109,4 +109,70 @@ class OfflineRepositoryFxTest {
         }
         assertEquals(5400.0, netWorth, 0.01)
     }
+
+    @Test
+    fun metrics_processOperationsByDateNotJsonOrder() = runBlocking {
+        val repo = newRepo()
+        val state = JSONObject(
+            """
+            {
+              "meta": { "baseCurrency": "PLN", "fxRates": {} },
+              "portfolios": [ { "id": "ptf-main", "name": "Glowny", "currency": "PLN" } ],
+              "accounts": [ { "id": "acc-main", "name": "Konto", "currency": "PLN" } ],
+              "assets": [
+                { "id": "a1", "ticker": "CDR", "name": "CD Projekt", "currency": "PLN", "currentPrice": 120.0, "risk": 5 }
+              ],
+              "operations": [
+                { "id": "op3", "date": "2024-02-01", "type": "Sprzedaz waloru", "portfolioId": "ptf-main", "accountId": "acc-main", "assetId": "a1", "quantity": 5.0, "price": 120.0, "fee": 0.0, "currency": "PLN" },
+                { "id": "op1", "date": "2024-01-01", "type": "Operacja gotowkowa", "portfolioId": "ptf-main", "accountId": "acc-main", "amount": 1000.0, "currency": "PLN" },
+                { "id": "op2", "date": "2024-01-02", "type": "Kupno waloru", "portfolioId": "ptf-main", "accountId": "acc-main", "assetId": "a1", "quantity": 10.0, "price": 100.0, "fee": 0.0, "currency": "PLN" }
+              ],
+              "liabilities": [], "recurringOps": [], "alerts": []
+            }
+            """.trimIndent()
+        )
+        repo.dispatch("PUT", "/state", Parameters.Empty, JSONObject().put("state", state).toString())
+
+        val res = repo.dispatch("GET", "/metrics/portfolio", Parameters.Empty, "")
+        assertEquals(200, res.status)
+        val metrics = JSONObject(res.body).getJSONObject("metrics")
+
+        assertEquals(600.0, metrics.getDouble("marketValue"), 0.01)
+        assertEquals(600.0, metrics.getDouble("cashTotal"), 0.01)
+        assertEquals(1200.0, metrics.getDouble("netWorth"), 0.01)
+        assertEquals(200.0, metrics.getDouble("totalPL"), 0.01)
+    }
+
+    @Test
+    fun metrics_conversionClampsSourceCostToOwnedQuantity() = runBlocking {
+        val repo = newRepo()
+        val state = JSONObject(
+            """
+            {
+              "meta": { "baseCurrency": "PLN", "fxRates": {} },
+              "portfolios": [ { "id": "ptf-main", "name": "Glowny", "currency": "PLN" } ],
+              "accounts": [ { "id": "acc-main", "name": "Konto", "currency": "PLN" } ],
+              "assets": [
+                { "id": "src", "ticker": "SRC", "name": "Source", "currency": "PLN", "currentPrice": 100.0, "risk": 5 },
+                { "id": "dst", "ticker": "DST", "name": "Target", "currency": "PLN", "currentPrice": 50.0, "risk": 5 }
+              ],
+              "operations": [
+                { "id": "op1", "date": "2024-01-01", "type": "Operacja gotowkowa", "portfolioId": "ptf-main", "accountId": "acc-main", "amount": 500.0, "currency": "PLN" },
+                { "id": "op2", "date": "2024-01-02", "type": "Kupno waloru", "portfolioId": "ptf-main", "accountId": "acc-main", "assetId": "src", "quantity": 5.0, "price": 100.0, "fee": 0.0, "currency": "PLN" },
+                { "id": "op3", "date": "2024-01-03", "type": "Konwersja waloru", "portfolioId": "ptf-main", "accountId": "acc-main", "assetId": "src", "targetAssetId": "dst", "quantity": 10.0, "targetQuantity": 10.0, "price": 100.0, "fee": 0.0, "currency": "PLN" }
+              ],
+              "liabilities": [], "recurringOps": [], "alerts": []
+            }
+            """.trimIndent()
+        )
+        repo.dispatch("PUT", "/state", Parameters.Empty, JSONObject().put("state", state).toString())
+
+        val res = repo.dispatch("GET", "/metrics/portfolio", Parameters.Empty, "")
+        assertEquals(200, res.status)
+        val metrics = JSONObject(res.body).getJSONObject("metrics")
+
+        assertEquals(500.0, metrics.getDouble("marketValue"), 0.01)
+        assertEquals(500.0, metrics.getDouble("netWorth"), 0.01)
+        assertEquals(0.0, metrics.getDouble("totalPL"), 0.01)
+    }
 }

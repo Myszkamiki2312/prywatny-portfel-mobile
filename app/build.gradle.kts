@@ -5,8 +5,8 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val defaultVersionName = "1.2.30"
-val defaultVersionCode = 10230
+val defaultVersionName = "1.2.31"
+val defaultVersionCode = 10231
 val appVersionName = providers.gradleProperty("appVersionName")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
     .orElse(defaultVersionName)
@@ -59,12 +59,8 @@ android {
             )
             val hasReleaseKeystore = providers.gradleProperty("RELEASE_STORE_FILE")
                 .orElse(providers.environmentVariable("RELEASE_STORE_FILE")).orNull != null
-            // Use a real release key when RELEASE_STORE_FILE et al. are provided; otherwise fall
-            // back to the debug key so the release build still produces an installable APK.
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }

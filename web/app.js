@@ -412,8 +412,8 @@ async function init() {
     openCloudAuthOverlay();
     return;
   }
-  await pullCloudState({ silent: true, createIfMissing: true });
-  await hydrateFromBackend();
+  const cloudLoaded = await pullCloudState({ silent: true, createIfMissing: true });
+  await hydrateFromBackend({ mirrorCloudState: cloudLoaded });
   renderAll();
   hideAppLoadingOverlay();
   maybeOpenOnboarding();
@@ -1158,7 +1158,7 @@ async function pushCloudState({ force = false, reason = "manual" } = {}) {
 
 async function pullCloudState({ silent = false, createIfMissing = false } = {}) {
   if (cloudSyncRuntime.pullInFlight) {
-    return;
+    return false;
   }
   try {
     assertCloudSyncReady({ requireSession: true });
@@ -1175,10 +1175,11 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
       cloudSyncRuntime.remoteUpdatedAt = "";
       if (createIfMissing) {
         await pushCloudState({ force: true, reason: "initial" });
+        return !cloudSyncConfig.lastError;
       } else if (!silent) {
         showToast("W chmurze nie ma jeszcze danych. Po pierwszej zmianie aplikacja zsynchronizuje portfel.", "info");
       }
-      return;
+      return false;
     }
     cloudSyncRuntime.suppressPush = true;
     cloudSyncRuntime.remoteUpdatedAt = String(row.updated_at || "");
@@ -1195,12 +1196,14 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
     if (!silent) {
       showToast("Dane pobrane z Supabase.", "info");
     }
+    return true;
   } catch (error) {
     // Never loaded cloud data this session — block pushes so we don't clobber the cloud.
     cloudSyncRuntime.pullFailed = true;
     cloudSyncConfig.lastError = error.message;
     saveCloudSyncConfig();
     showToast(`Supabase: ${error.message}`, "error");
+    return false;
   } finally {
     cloudSyncRuntime.suppressPush = false;
     cloudSyncRuntime.pullInFlight = false;
@@ -2343,7 +2346,8 @@ function bindEvents() {
   document.body.addEventListener("click", onActionClick);
 }
 
-async function hydrateFromBackend() {
+async function hydrateFromBackend(options = {}) {
+  const mirrorCloudState = Boolean(options.mirrorCloudState);
   backendSync.checked = true;
   backendSync.suspendPush = true;
   try {
@@ -2352,12 +2356,14 @@ async function hydrateFromBackend() {
     if (!CLOUD_ONLY_DATA && payload && payload.state) {
       state = normalizeState(payload.state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } else if (CLOUD_ONLY_DATA) {
+    } else if (CLOUD_ONLY_DATA && mirrorCloudState) {
       await apiRequest("/state", {
         method: "PUT",
         body: { state },
         timeoutMs: 10000
       });
+    } else if (CLOUD_ONLY_DATA && payload && payload.state) {
+      state = normalizeState(payload.state);
     }
     backendSync.available = true;
     await hydrateReportCatalog();
@@ -4989,6 +4995,8 @@ function renderPublicPortfoliosRows(items) {
 
 function localScanner(filters) {
   const metrics = computeMetrics(filters.portfolioId || "");
+  const baseCurrency = normalizeCurrency(state.meta.baseCurrency, "PLN");
+  const fxRates = normalizeFxRates(state.meta.fxRates);
   const holdingsMap = {};
   metrics.holdings.forEach((holding) => {
     holdingsMap[holding.assetId] = holding;
@@ -4996,7 +5004,10 @@ function localScanner(filters) {
   const items = [];
   state.assets.forEach((asset) => {
     const holding = holdingsMap[asset.id];
-    const price = toNum(asset.currentPrice);
+    const assetCurrency = normalizeCurrency(asset.currency, baseCurrency);
+    const quoteCurrency = normalizeCurrency(asset.quoteCurrency, assetCurrency);
+    const nativePrice = holding && toNum(holding.currentPrice) > 0 ? toNum(holding.currentPrice) : toNum(asset.currentPrice);
+    const price = convertCurrencyValue(nativePrice, quoteCurrency, baseCurrency, fxRates);
     const risk = toNum(asset.risk || 5);
     const share = holding ? toNum(holding.share) : 0;
     const unrealizedPct = holding && holding.cost !== 0 ? (holding.unrealized / holding.cost) * 100 : 0;
@@ -5035,7 +5046,7 @@ function localScanner(filters) {
       score: Number(score.toFixed(2)),
       risk,
       price,
-      currency: asset.currency,
+      currency: baseCurrency,
       share,
       unrealizedPct,
       sector: asset.sector || "-",
@@ -8734,11 +8745,12 @@ function computeMetrics(portfolioId, options = {}) {
       // negative (which renders a phantom holding and sign-flips unrealizedPct). Cash proceeds
       // still reflect the real transaction quantity.
       const ownedQty = Math.max(0, holding.qty);
-      const reduceQty = Math.min(qty, ownedQty);
+      const sellQty = Math.abs(qty);
+      const reduceQty = Math.min(sellQty, ownedQty);
       const avg = ownedQty > 0 ? holding.cost / ownedQty : 0;
       const costOut = avg * reduceQty;
-      const gross = qty * price || Math.abs(amount);
-      const netProceeds = (amount !== 0 ? amount : gross) - fee;
+      const gross = sellQty * price || Math.abs(amount);
+      const netProceeds = (amount !== 0 ? Math.abs(amount) : gross) - fee;
       addHolding(operation.assetId, -reduceQty, -costOut);
       addCash(accountId, netProceeds, currency);
       addAccountStat(accountId, "sellGross", gross, currency);
@@ -8753,7 +8765,10 @@ function computeMetrics(portfolioId, options = {}) {
     if (type.includes("konwers")) {
       const source = ensureHolding(operation.assetId);
       const avg = source.qty > 0 ? source.cost / source.qty : price;
-      const sourceQty = qty;
+      const sourceQty = Math.min(Math.abs(qty), Math.max(0, source.qty));
+      if (sourceQty <= 0) {
+        return;
+      }
       const costOut = avg * sourceQty;
       addHolding(operation.assetId, -sourceQty, -costOut);
       const receivedQty = targetQty || sourceQty;
@@ -8854,7 +8869,9 @@ function computeMetrics(portfolioId, options = {}) {
 
   const cashTotal = sum(Array.from(cashBuckets.values()).map((bucket) => toBase(bucket.amount, bucket.currency)));
   const liabilitiesTotal = sum(
-    state.liabilities.map((item) => toBase(toNum(item.amount), normalizeCurrency(item.currency, baseCurrency)))
+    state.liabilities
+      .filter((item) => !portfolioId || item.portfolioId === portfolioId)
+      .map((item) => toBase(toNum(item.amount), normalizeCurrency(item.currency, baseCurrency)))
   );
   const unrealized = marketValue - bookValue;
   const totalPL = unrealized + realized + dividends - fees;
@@ -10023,7 +10040,13 @@ function importOperations(rows) {
     const currency = textOrFallback(row.currency || row.waluta, state.meta.baseCurrency);
     // Normalize precision at the import boundary too (manual entry already does via round2/round6),
     // so CSV import doesn't persist raw float dust into state and the cloud.
-    const quantity = round6(row.quantity || row.ilosc);
+    const typeKey = normalizeKey(type);
+    const rawQuantity = row.quantity || row.ilosc;
+    const quantity = round6(
+      typeKey.includes("kupno") || typeKey.includes("buy") || typeKey.includes("sprzed") || typeKey.includes("sell")
+        ? Math.abs(toNum(rawQuantity))
+        : rawQuantity
+    );
     const targetQuantity = round6(row.targetQuantity || row.iloscDocelowa);
     const price = round6(row.price || row.cena);
     const amount = round2(row.amount || row.kwota);

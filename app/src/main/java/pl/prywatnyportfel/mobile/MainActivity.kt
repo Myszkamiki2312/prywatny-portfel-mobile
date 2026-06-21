@@ -1,6 +1,7 @@
 package pl.prywatnyportfel.mobile
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.JavascriptInterface
@@ -105,7 +106,16 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                return false
+                val target = request?.url ?: return false
+                if (isLocalAppUrl(target)) {
+                    return false
+                }
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, target))
+                    true
+                } catch (_: Exception) {
+                    true
+                }
             }
 
             override fun onReceivedError(
@@ -173,6 +183,12 @@ class MainActivity : AppCompatActivity() {
         val bytes = ByteArray(32)
         java.security.SecureRandom().nextBytes(bytes)
         return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun isLocalAppUrl(uri: Uri): Boolean {
+        return uri.scheme == "http" &&
+            uri.host == "127.0.0.1" &&
+            uri.port == offlineServer.port
     }
 
     // Minimal, read-only bridge: a single token getter, no powerful methods exposed to JS.

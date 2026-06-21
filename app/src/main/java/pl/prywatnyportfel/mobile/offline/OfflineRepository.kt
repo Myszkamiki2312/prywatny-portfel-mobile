@@ -590,8 +590,7 @@ class OfflineRepository(private val context: Context) {
         var dividends = 0.0
         var fees = 0.0
 
-        for (i in 0 until operations.length()) {
-            val op = operations.optJSONObject(i) ?: continue
+        operationLoop@ for (op in sortedOperationObjects(operations)) {
             val opPortfolioId = op.optString("portfolioId", "")
             if (portfolioId.isNotBlank() && opPortfolioId != portfolioId) {
                 continue
@@ -670,9 +669,17 @@ class OfflineRepository(private val context: Context) {
                     if (assetId.isNotBlank()) {
                         val beforeQty = qtyByAsset[assetId] ?: 0.0
                         val beforeCost = costByAsset[assetId] ?: 0.0
+                        val sourceQty = kotlin.math.min(quantity, beforeQty.coerceAtLeast(0.0))
+                        if (sourceQty <= 0.0) {
+                            if (fee > 0.0) {
+                                cash -= toB(fee)
+                                fees += toB(fee)
+                            }
+                            continue@operationLoop
+                        }
                         val avg = if (beforeQty > 0.0) beforeCost / beforeQty else toB(price)
-                        val costOut = avg * quantity
-                        val nextQty = (beforeQty - quantity).coerceAtLeast(0.0)
+                        val costOut = avg * sourceQty
+                        val nextQty = (beforeQty - sourceQty).coerceAtLeast(0.0)
                         val nextCost = (beforeCost - costOut).coerceAtLeast(0.0)
                         qtyByAsset[assetId] = if (nextQty < 1e-9) 0.0 else nextQty
                         costByAsset[assetId] = if (nextCost < 1e-6) 0.0 else nextCost
@@ -680,7 +687,7 @@ class OfflineRepository(private val context: Context) {
                         val targetAssetId = op.optString("targetAssetId", "")
                         if (targetAssetId.isNotBlank()) {
                             val targetQty = kotlin.math.abs(num(op.opt("targetQuantity")))
-                            val receivedQty = if (targetQty > 0.0) targetQty else quantity
+                            val receivedQty = if (targetQty > 0.0) targetQty else sourceQty
                             qtyByAsset[targetAssetId] = (qtyByAsset[targetAssetId] ?: 0.0) + receivedQty
                             costByAsset[targetAssetId] = (costByAsset[targetAssetId] ?: 0.0) + costOut + toB(fee)
                         }
@@ -2238,6 +2245,18 @@ class OfflineRepository(private val context: Context) {
         } catch (_: Exception) {
             JSONObject()
         }
+    }
+
+    private fun sortedOperationObjects(operations: JSONArray): List<JSONObject> {
+        val rows = mutableListOf<JSONObject>()
+        for (i in 0 until operations.length()) {
+            operations.optJSONObject(i)?.let { rows.add(it) }
+        }
+        return rows.sortedWith(
+            compareBy<JSONObject> { it.optString("date", "") }
+                .thenBy { it.optString("createdAt", "") }
+                .thenBy { it.optString("id", "") }
+        )
     }
 
     private fun num(value: Any?): Double {
